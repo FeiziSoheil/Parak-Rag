@@ -1,0 +1,233 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #fafafa;
+  --foreground: #0f0f0f;
+  --card: #ffffff;
+  --card-foreground: #0f0f0f;
+  
+  /* Single subtle accent - neutral blue-gray */
+  --primary: #52525b;
+  --primary-foreground: #fafafa;
+  --primary-glow: rgba(82, 82, 91, 0.08);
+  
+  --muted: #f4f4f5;
+  --muted-foreground: #71717a;
+  --border: #e4e4e7;
+  --ring: #52525b;
+  
+  --accent: #52525b;
+  --accent-glow: rgba(82, 82, 91, 0.08);
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
+
+  /* Buttons: light white tint */
+  --button: #f5f5f5;
+  --button-foreground: #0f0f0f;
+  --button-hover: #ebebeb;
+  --button-border: #e8e8e8;
+  
+  --gradient-1: #52525b;
+  --gradient-2: #52525b;
+  --gradient-3: #52525b;
+
+  /* Sidebar (shadcn) */
+  --sidebar-background: 0 0% 98%;
+  --sidebar-foreground: 240 5.3% 26.1%;
+  --sidebar-primary: 240 5.9% 10%;
+  --sidebar-primary-foreground: 0 0% 98%;
+  --sidebar-accent: 240 4.8% 95.9%;
+  --sidebar-accent-foreground: 240 5.9% 10%;
+  --sidebar-border: 220 13% 91%;
+  --sidebar-ring: 217.2 91.2% 59.8%;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #09090b;
+    --foreground: #fafafa;
+    --card: #18181b;
+    --card-foreground: #fafafa;
+    
+    --primary: #a1a1aa;
+    --primary-foreground: #18181b;
+    --primary-glow: rgba(161, 161, 170, 0.12);
+    
+    --muted: #27272a;
+    --muted-foreground: #a1a1aa;
+    --border: #27272a;
+    --ring: #a1a1aa;
+    
+    --accent: #a1a1aa;
+    --accent-glow: rgba(161, 161, 170, 0.12);
+    --destructive: #ef4444;
+    --destructive-foreground: #18181b;
+
+    /* Buttons: light white tint (dark theme) */
+    --button: #d4d4d8;
+    --button-foreground: #18181b;
+    --button-hover: #e4e4e7;
+    --button-border: #3f3f46;
+    
+    --gradient-1: #a1a1aa;
+    --gradient-2: #a1a1aa;
+    --gradient-3: #a1a1aa;
+
+    /* Sidebar (shadcn) - dark */
+    --sidebar-background: 240 5.9% 10%;
+    --sidebar-foreground: 240 4.8% 95.9%;
+    --sidebar-primary: 224.3 76.3% 48%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 3.7% 15.9%;
+    --sidebar-accent-foreground: 240 4.8% 95.9%;
+    --sidebar-border: 240 3.7% 15.9%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+}
+
+* {
+  @apply border-border;
+}
+
+body {
+  @apply bg-background text-foreground;
+  font-feature-settings: "rlig" 1, "calt" 1, "ss01" 1;
+  letter-spacing: -0.011em;
+}
+
+/* Very subtle background tint */
+.gradient-mesh {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.15;
+  background: radial-gradient(circle at 50% 0%, var(--primary-glow), transparent 60%);
+  filter: blur(80px);
+  z-index: 0;
+}
+
+/* Subtle noise texture */
+.grain {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.025;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+  z-index: 1;
+  mix-blend-mode: overlay;
+}
+
+/* Glassmorphism utilities */
+.glass {
+  @apply backdrop-blur-xl border;
+  background-color: color-mix(in srgb, var(--card) 60%, transparent);
+  border-color: color-mix(in srgb, var(--border) 50%, transparent);
+}
+
+.glass-strong {
+  @apply backdrop-blur-2xl border;
+  background-color: color-mix(in srgb, var(--card) 80%, transparent);
+  border-color: color-mix(in srgb, var(--border) 60%, transparent);
+}
+
+/* Accent text - single color */
+.gradient-text {
+  @apply text-foreground font-semibold;
+}
+
+/* Modern shadows */
+.shadow-modern {
+  box-shadow: 
+    0 1px 2px 0 rgb(0 0 0 / 0.05),
+    0 0 0 1px rgb(0 0 0 / 0.02);
+}
+
+.shadow-modern-lg {
+  box-shadow: 
+    0 4px 6px -1px rgb(0 0 0 / 0.07),
+    0 2px 4px -2px rgb(0 0 0 / 0.05),
+    0 0 0 1px rgb(0 0 0 / 0.02);
+}
+
+.shadow-modern-xl {
+  box-shadow: 
+    0 20px 25px -5px rgb(0 0 0 / 0.08),
+    0 8px 10px -6px rgb(0 0 0 / 0.05),
+    0 0 0 1px rgb(0 0 0 / 0.02);
+}
+
+/* Smooth transitions */
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+  
+  .transition-smooth {
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  
+  .transition-smooth-slow {
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-border rounded-full;
+  transition: background 0.2s;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--muted-foreground) 30%, transparent);
+}
+
+/* Hide scrollbar but keep scroll */
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Selection */
+::selection {
+  background: color-mix(in srgb, var(--primary) 20%, transparent);
+  color: var(--foreground);
+}
+
+/* Skeleton shimmer - visible loading animation */
+@keyframes skeleton-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--muted) 0%,
+    color-mix(in srgb, var(--muted-foreground) 35%, var(--muted)) 25%,
+    color-mix(in srgb, var(--muted-foreground) 45%, var(--muted)) 50%,
+    var(--muted) 75%,
+    color-mix(in srgb, var(--muted-foreground) 35%, var(--muted)) 100%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s ease-in-out infinite;
+}
+
+/* Persian/Arabic message content: prevent letter-spacing from breaking joining, ensure RTL shaping */
+.message-content,
+.markdown-message {
+  letter-spacing: normal;
+  font-feature-settings: "rlig" 1, "calt" 1;
+}
