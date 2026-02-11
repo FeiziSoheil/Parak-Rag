@@ -211,6 +211,72 @@ def _embed_image_sync(image_bytes: bytes) -> list[float]:
     return embed_image_bytes(image_bytes)
 
 
+def detect_intent_with_llm(message: str | None) -> dict:
+    """
+    Use LLM to detect user intent. Returns dict with:
+    - needs_qdrant_search: bool (True if product/store/faq search needed)
+    - intent_type: str ("product_search" | "store_info" | "faq" | "chitchat" | "greeting" | "unknown")
+    - confidence: float (0-1)
+    
+    This replaces keyword-based is_product_related_query with LLM understanding.
+    Works for any language without hardcoded keywords.
+    """
+    if not message or not message.strip():
+        return {"needs_qdrant_search": False, "intent_type": "unknown", "confidence": 1.0}
+    
+    if not OPENROUTER_API_KEY:
+        # Fallback: if no API key, assume product search for non-trivial messages
+        return {"needs_qdrant_search": len(message.strip()) > 10, "intent_type": "unknown", "confidence": 0.5}
+    
+    prompt = f"""Analyze this user message and determine the intent. Respond with ONLY a JSON object.
+
+User message: "{message}"
+
+Determine:
+1. Does this message require searching a product database/catalog? (e.g. looking for products, asking about items, prices, recommendations)
+2. Does this message require searching store information? (e.g. store hours, location, contact)
+3. Does this message require searching FAQ? (e.g. return policy, shipping, payment methods)
+4. Is this just a greeting or chitchat? (e.g. hello, how are you, what's your name)
+
+Respond with this exact JSON schema:
+{{
+  "needs_qdrant_search": true/false,
+  "intent_type": "product_search" | "store_info" | "faq" | "chitchat" | "greeting" | "unknown",
+  "confidence": 0.0-1.0
+}}
+
+Rules:
+- needs_qdrant_search = true if intent_type is "product_search", "store_info", or "faq"
+- needs_qdrant_search = false if intent_type is "chitchat" or "greeting"
+- For ambiguous messages, lean towards needs_qdrant_search = true
+- Works for ANY language (English, Persian, French, Chinese, etc.)"""
+
+    try:
+        llm = ChatOpenAI(
+            model=OPENROUTER_MODEL,
+            openai_api_key=OPENROUTER_API_KEY,
+            openai_api_base=OPENROUTER_BASE_URL,
+            temperature=0,
+            max_tokens=150,
+        )
+        response = llm.invoke([HumanMessage(content=prompt)])
+        content = response.content if hasattr(response, "content") else str(response)
+        
+        json_str = _extract_first_json_object(content)
+        if json_str:
+            data = json.loads(json_str)
+            return {
+                "needs_qdrant_search": bool(data.get("needs_qdrant_search", False)),
+                "intent_type": data.get("intent_type", "unknown"),
+                "confidence": float(data.get("confidence", 0.5)),
+            }
+    except Exception:
+        pass
+    
+    # Fallback on error: assume search needed for longer messages
+    return {"needs_qdrant_search": len(message.strip()) > 15, "intent_type": "unknown", "confidence": 0.3}
+
+
 def get_query_vector(text: str | None, image_bytes: bytes | None) -> list[float]:
     """Get embedding vector for the query (text or image). Used for parallel search in store/faq."""
     if image_bytes:

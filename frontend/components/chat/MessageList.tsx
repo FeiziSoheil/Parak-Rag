@@ -13,6 +13,17 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { StreamingTypewriter } from "@/components/ui/typewriter-effect";
+import ShinyText from "@/components/ui/ShinyText";
+import { Loader } from "@/components/ui/loader";
+
+const LOADING_PHRASES = [
+  "Finding products...",
+  "Gathering information...",
+  "Searching the catalog...",
+  "Please wait a moment...",
+  "Preparing suggestions...",
+];
+const LOADING_PHRASE_INTERVAL_MS = 3200;
 
 export type MessageEntry = {
   id: number;
@@ -32,6 +43,8 @@ export type SuggestedPromptItem = { text: string; icon: React.ComponentType<{ cl
 type Props = {
   messages: MessageEntry[];
   sending?: boolean;
+  /** When true, show ShinyText loader (Qdrant search). When false, show dots loader. */
+  expectsQdrantSearch?: boolean;
   welcomeMessage?: string | null;
   /** Shown below welcome when chat is empty; clicking sends that text. */
   suggestedPrompts?: SuggestedPromptItem[];
@@ -39,6 +52,10 @@ type Props = {
   onRegenerate?: () => void;
   selectedProductIds?: Set<number>;
   onProductSelect?: (product: ProductSummary) => void;
+  /** Ref for the last assistant voice audio element (for playback control / interruption). */
+  voiceAudioRef?: React.RefObject<HTMLAudioElement | null>;
+  onAudioPlayStart?: () => void;
+  onAudioPlayEnd?: () => void;
 };
 
 function ProductCardImage({ url, alt }: { url: string; alt: string }) {
@@ -87,7 +104,8 @@ function ProductCards({
 }) {
   const isSelectable = typeof onProductSelect === "function";
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-4">
+    <div className="mt-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
       {products.map((p) => {
         const imgSrc = p.image_url?.trim() || null;
         const selected = selectedProductIds?.has(p.product_id) ?? false;
@@ -124,7 +142,9 @@ function ProductCards({
               )}
             </div>
             <div className="p-3">
-              <p className="text-sm font-medium text-foreground line-clamp-2">{p.subject}</p>
+              <p className="text-sm font-medium text-foreground line-clamp-2">
+                <ShinyText text={p.subject} speed={2} spread={120} direction="left" yoyo pauseOnHover className="line-clamp-2" />
+              </p>
               <div className="flex items-center justify-between mt-1.5">
                 {p.price != null && (
                   <p className="text-sm text-muted-foreground">
@@ -139,6 +159,7 @@ function ProductCards({
           </Wrapper>
         );
       })}
+      </div>
     </div>
   );
 }
@@ -195,18 +216,6 @@ function AssistantMessageContent({
   );
 }
 
-/** Skeleton placeholder for assistant message while generating (text-like lines) */
-function AssistantMessageSkeleton() {
-  return (
-    <div className="flex flex-col gap-1.5 py-0.5 w-full min-w-[16rem]">
-      <div className="skeleton-shimmer h-3 w-full rounded-sm" />
-      <div className="skeleton-shimmer h-3 w-full rounded-sm" />
-      {/* <div className="skeleton-shimmer h-3 w-[95%] rounded-sm" /> */}
-      {/* <div className="skeleton-shimmer h-3 w-[88%] rounded-sm" /> */}
-      <div className="skeleton-shimmer h-3 w-[70%] rounded-sm" />
-    </div>
-  );
-}
 
 function CopyIcon({ className }: { className?: string }) {
   return (
@@ -236,11 +245,28 @@ function CheckIcon({ className }: { className?: string }) {
   );
 }
 
-export function MessageList({ messages, sending, welcomeMessage, suggestedPrompts, onSuggestedPromptClick, onRegenerate, selectedProductIds, onProductSelect }: Props) {
+export function MessageList({ messages, sending, expectsQdrantSearch = false, welcomeMessage, suggestedPrompts, onSuggestedPromptClick, onRegenerate, selectedProductIds, onProductSelect, voiceAudioRef, onAudioPlayStart, onAudioPlayEnd }: Props) {
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [typewriterCompleteIds, setTypewriterCompleteIds] = useState<Set<number>>(() => new Set());
+  const [loadingPhraseIndex, setLoadingPhraseIndex] = useState(0);
   const hadMessagesRef = useRef(false);
   const lastVoiceAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    if (!sending) {
+      setLoadingPhraseIndex(0);
+      return;
+    }
+    const id = setInterval(() => {
+      setLoadingPhraseIndex((i) => (i + 1) % LOADING_PHRASES.length);
+    }, LOADING_PHRASE_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [sending]);
+
+  const setVoiceAudioRef = (el: HTMLAudioElement | null) => {
+    lastVoiceAudioRef.current = el;
+    if (voiceAudioRef) (voiceAudioRef as React.MutableRefObject<HTMLAudioElement | null>).current = el;
+  };
 
   // When switching session, clear typewriter state
   useEffect(() => {
@@ -360,12 +386,14 @@ export function MessageList({ messages, sending, welcomeMessage, suggestedPrompt
                   />
                   {m.audioBase64 && idx === messages.length - 1 && !sending && (
                     <audio
-                      ref={lastVoiceAudioRef}
+                      ref={setVoiceAudioRef}
                       src={`data:audio/mpeg;base64,${m.audioBase64}`}
                       autoPlay
                       className="hidden"
                       aria-hidden
                       onLoadedData={() => lastVoiceAudioRef.current?.play().catch(() => {})}
+                      onPlay={onAudioPlayStart}
+                      onEnded={onAudioPlayEnd}
                     />
                   )}
                 </>
@@ -434,8 +462,21 @@ export function MessageList({ messages, sending, welcomeMessage, suggestedPrompt
         ))}
         {sending && (
           <div className="flex flex-col items-start animate-fade-in">
-            <div className="max-w-[85%] rounded-xl px-4 py-3 bg-muted text-foreground border border-border/50">
-              <AssistantMessageSkeleton />
+            <div className="max-w-[85%] rounded-xl px-4 py-1 bg-muted text-foreground border border-border/50">
+              {expectsQdrantSearch ? (
+                <ShinyText
+                  text={LOADING_PHRASES[loadingPhraseIndex]}
+                  speed={2}
+                  delay={0}
+                  spread={120}
+                  direction="left"
+                  yoyo
+                  pauseOnHover
+                  className="text-sm"
+                />
+              ) : (
+                <Loader variant="dots-pulse" size="md" />
+              )}
             </div>
           </div>
         )}

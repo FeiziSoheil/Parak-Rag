@@ -26,18 +26,58 @@ from app.services.rag import (
     filter_search_results_by_min_score,
     build_combined_context,
     run_rag_response,
-    is_product_related_query,
     is_broad_products_query,
     products_from_search_results,
     get_query_vector,
     search_store,
     search_faq,
+    detect_intent_with_llm,
 )
 from app.services.stt import transcribe_audio
 from app.services.tts import text_to_speech_to_bytes
 
 router = APIRouter()
 _executor = ThreadPoolExecutor(max_workers=4)
+
+
+def _format_product_context(products: list[dict]) -> str:
+    """Format selected products as context prefix for the user message.
+    This helps the LLM understand which product(s) the user is referring to.
+    """
+    if not products:
+        return ""
+    lines = []
+    for p in products:
+        parts = []
+        subject = p.get("subject") or ""
+        if subject:
+            parts.append(f"Name: {subject}")
+        price = p.get("price")
+        if price is not None:
+            parts.append(f"Price: {price:.2f}" if isinstance(price, (int, float)) else f"Price: {price}")
+        category = p.get("category_name") or ""
+        if category:
+            parts.append(f"Category: {category}")
+        # Include variants if available (for color/size questions)
+        variants = p.get("variants")
+        if variants and isinstance(variants, list):
+            variant_strs = []
+            for v in variants[:5]:  # Limit to 5 variants
+                if isinstance(v, dict):
+                    v_name = v.get("name") or v.get("color") or ""
+                    v_price = v.get("price")
+                    if v_name:
+                        if v_price is not None:
+                            variant_strs.append(f"{v_name}: ${v_price:.2f}" if isinstance(v_price, (int, float)) else f"{v_name}: ${v_price}")
+                        else:
+                            variant_strs.append(v_name)
+            if variant_strs:
+                parts.append(f"Variants: {', '.join(variant_strs)}")
+        if parts:
+            lines.append("- " + " | ".join(parts))
+    if not lines:
+        return ""
+    return f"[Selected product(s) context:\n" + "\n".join(lines) + "\n]\n\n"
 
 
 def _get_last_shown_products(db: Session, session_id: int) -> list[dict]:
@@ -84,7 +124,16 @@ async def _run_chat_response(
     loop = asyncio.get_event_loop()
     user_text = None if effective_message == "(user sent an image)" else (effective_message or None)
 
-    do_product_search = is_product_related_query(user_text) or image_bytes is not None
+    # Use LLM-based intent detection instead of keyword matching
+    if image_bytes:
+        do_product_search = True
+    else:
+        intent_result = await loop.run_in_executor(
+            _executor,
+            lambda: detect_intent_with_llm(user_text),
+        )
+        do_product_search = intent_result.get("needs_qdrant_search", False)
+    
     if do_product_search:
         if image_bytes:
             search_results = await loop.run_in_executor(
@@ -198,6 +247,106 @@ async def get_welcome(
     return {"text": text}
 
 
+@router.post("/detect-intent")
+async def detect_intent(
+    message: str = Form(..., description="User message to analyze"),
+    has_image: bool = Form(False, description="Whether user is sending an image"),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Detect user intent using LLM. Returns whether Qdrant search is needed.
+    Use this before sending chat to show appropriate loading indicator.
+    
+    Returns:
+    - needs_qdrant_search: bool
+    - intent_type: str (product_search, store_info, faq, chitchat, greeting, unknown)
+    - confidence: float (0-1)
+    """
+    # If user is sending an image, always needs Qdrant search (image similarity)
+    if has_image:
+        return {
+            "needs_qdrant_search": True,
+            "intent_type": "product_search",
+            "confidence": 1.0,
+        }
+    
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        _executor,
+        lambda: detect_intent_with_llm(message),
+    )
+    return result
+
+
+@router.post("/voice-detect-intent")
+async def voice_detect_intent(
+    voice: UploadFile = File(..., description="Audio file to transcribe and detect intent"),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Transcribe voice and detect intent using LLM.
+    Use this before sending voice-chat to show appropriate loading indicator.
+    
+    Returns:
+    - transcribed_text: str (the transcribed text from audio)
+    - needs_qdrant_search: bool
+    - intent_type: str (product_search, store_info, faq, chitchat, greeting, unknown)
+    - confidence: float (0-1)
+    """
+    if not voice.filename:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="voice file required")
+    
+    VOICE_TEMP_DIR.mkdir(parents=True, exist_ok=True)
+    suffix = Path(voice.filename).suffix or ".webm"
+    temp_path = VOICE_TEMP_DIR / f"{uuid.uuid4().hex}{suffix}"
+    
+    try:
+        content = await voice.read()
+        temp_path.write_bytes(content)
+        
+        # Transcribe audio
+        loop = asyncio.get_event_loop()
+        transcribed_text = await loop.run_in_executor(
+            _executor,
+            lambda: transcribe_audio(str(temp_path)),
+        )
+        
+        if not transcribed_text or not transcribed_text.strip():
+            return {
+                "transcribed_text": "",
+                "needs_qdrant_search": False,
+                "intent_type": "unknown",
+                "confidence": 0.5,
+            }
+        
+        # Detect intent from transcribed text
+        intent_result = await loop.run_in_executor(
+            _executor,
+            lambda: detect_intent_with_llm(transcribed_text),
+        )
+        
+        return {
+            "transcribed_text": transcribed_text,
+            "needs_qdrant_search": intent_result.get("needs_qdrant_search", False),
+            "intent_type": intent_result.get("intent_type", "unknown"),
+            "confidence": intent_result.get("confidence", 0.5),
+        }
+    except Exception as e:
+        # Fallback on error
+        return {
+            "transcribed_text": "",
+            "needs_qdrant_search": True,  # Assume search needed on error
+            "intent_type": "unknown",
+            "confidence": 0.3,
+        }
+    finally:
+        if temp_path.exists():
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
+
+
 @router.get("/sessions", response_model=list[SessionResponse])
 def list_sessions(
     current_user: User = Depends(get_current_user),
@@ -282,18 +431,32 @@ async def chat(
 async def voice_chat(
     session_id: int = Form(...),
     voice: UploadFile = File(..., description="Audio file (e.g. webm, mp3, wav)"),
+    selected_products: str | None = Form(None, description="JSON array of selected products (product_id, subject, price, category_name)"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """
     Full voice conversation: STT -> RAG -> TTS. Returns JSON with message, products, and audio_base64.
     On TTS failure, returns message and products without audio (graceful degradation).
+    
+    If selected_products is provided (JSON array), the user's transcribed message will be prefixed
+    with product context so the LLM knows which product(s) the user is asking about.
     """
     session = db.query(ChatSession).filter(ChatSession.id == session_id, ChatSession.user_id == current_user.id).first()
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
     if not voice.filename:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="voice file required")
+
+    # Parse selected products if provided
+    attached_products: list[dict] = []
+    if selected_products and selected_products.strip():
+        try:
+            attached_products = json.loads(selected_products)
+            if not isinstance(attached_products, list):
+                attached_products = []
+        except (json.JSONDecodeError, TypeError):
+            attached_products = []
 
     VOICE_TEMP_DIR.mkdir(parents=True, exist_ok=True)
     suffix = Path(voice.filename).suffix or ".webm"
@@ -325,8 +488,16 @@ async def voice_chat(
             detail="No speech detected. Please try again with a clearer recording.",
         )
 
+    # Build effective message with product context if products are selected
+    transcribed_text = text.strip()
+    if attached_products:
+        product_context = _format_product_context(attached_products)
+        effective_message = product_context + transcribed_text
+    else:
+        effective_message = transcribed_text
+
     full_text, products = await _run_chat_response(
-        db, session_id, text.strip(), image_bytes=None,
+        db, session_id, effective_message, image_bytes=None,
     )
 
     audio_base64 = None

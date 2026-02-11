@@ -225,6 +225,23 @@ body {
   animation: skeleton-shimmer 1.5s ease-in-out infinite;
 }
 
+/* Loader dots-pulse */
+@keyframes loader-dots-pulse {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.5; }
+  40% { transform: scale(1); opacity: 1; }
+}
+.loader-dot {
+  border-radius: 50%;
+  background-color: var(--foreground);
+  animation: loader-dots-pulse 1.4s ease-in-out infinite both;
+}
+.loader-dot-1 { animation-delay: 0s; }
+.loader-dot-2 { animation-delay: 0.16s; }
+.loader-dot-3 { animation-delay: 0.32s; }
+.loader-dots-pulse-sm .loader-dot { width: 4px; height: 4px; }
+.loader-dots-pulse-md .loader-dot { width: 6px; height: 6px; }
+.loader-dots-pulse-lg .loader-dot { width: 8px; height: 8px; }
+
 /* Persian/Arabic message content: prevent letter-spacing from breaking joining, ensure RTL shaping */
 .message-content,
 .markdown-message {

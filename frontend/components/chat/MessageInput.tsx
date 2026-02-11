@@ -1,17 +1,28 @@
 "use client";
 
-import { forwardRef, useCallback, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { AudioLines } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import type { ProductSummary } from "@/lib/api";
+import { float32ToWavFile } from "@/lib/audioUtils";
 
 export type MessageInputHandle = { focus: () => void };
 
+export type VoiceUIState = "idle" | "listening" | "userSpeaking" | "processing" | "aiSpeaking";
+
 type Props = {
   disabled?: boolean;
+  /** True while a message (text or voice) is being sent. */
+  sending?: boolean;
   onSend: (message: string, imageFile: File | null, attachedProducts?: ProductSummary[]) => Promise<void>;
-  onSendVoice?: (voiceFile: File) => Promise<void>;
+  /** Voice handler now receives attached products so backend knows which product user is asking about */
+  onSendVoice?: (voiceFile: File, attachedProducts?: ProductSummary[]) => Promise<void>;
   attachedProducts?: ProductSummary[];
   onRemoveProduct?: (productId: number) => void;
+  /** When AI is playing voice response; VAD must be paused to avoid feedback loop. */
+  isAISpeaking?: boolean;
+  /** Call to stop AI playback (e.g. on user interruption). */
+  onStopAIPlayback?: () => void;
 };
 
 function IconImage({ className }: { className?: string }) {
@@ -97,28 +108,6 @@ function IconLoader({ className }: { className?: string }) {
   );
 }
 
-function IconMic({ className }: { className?: string }) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width="20"
-      height="20"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden
-    >
-      <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-      <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-      <line x1="12" x2="12" y1="19" y2="22" />
-    </svg>
-  );
-}
-
 function IconSquare({ className }: { className?: string }) {
   return (
     <svg
@@ -135,19 +124,55 @@ function IconSquare({ className }: { className?: string }) {
   );
 }
 
+/** Waveform bars for "AI Speaking" state. */
+function IconWaveform({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      className={className}
+      aria-hidden
+    >
+      <rect x="3" y="8" width="2" height="8" rx="1" />
+      <rect x="7" y="5" width="2" height="14" rx="1" />
+      <rect x="11" y="9" width="2" height="6" rx="1" />
+      <rect x="15" y="4" width="2" height="16" rx="1" />
+      <rect x="19" y="7" width="2" height="10" rx="1" />
+    </svg>
+  );
+}
+
+const MIN_VOICE_SAMPLES = 1600; // ~0.1s at 16kHz (allow very short utterances)
+// VAD assets from CDN (worklet + Silero ONNX). WASM from same-origin to avoid fetch/CORS errors.
+const VAD_BASE_ASSET_PATH = "https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.27/dist/";
+// Serve onnxruntime-web from public/onnxruntime-web (copied by postinstall) so .mjs/.wasm load correctly
+const VAD_ONNX_WASM_PATH = "/onnxruntime-web/";
+
 const MessageInputInner = forwardRef<MessageInputHandle, Props>(function MessageInput(
-  { disabled, onSend, onSendVoice, attachedProducts = [], onRemoveProduct },
+  { disabled, sending: sendingProp = false, onSend, onSendVoice, attachedProducts = [], onRemoveProduct, isAISpeaking = false, onStopAIPlayback },
   ref
 ) {
   const [text, setText] = useState("");
   const [imageFile, setImageFile] = useState<File | null>(null);
-  const [sending, setSending] = useState(false);
-  const [recording, setRecording] = useState(false);
+  const [sendingText, setSendingText] = useState(false);
+  const [voiceModeActive, setVoiceModeActive] = useState(false);
+  const [userSpeaking, setUserSpeaking] = useState(false);
+  const [vadLoading, setVadLoading] = useState(false);
+  const [vadError, setVadError] = useState<string | null>(null);
+  const [inputFocused, setInputFocused] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
-  const streamRef = useRef<MediaStream | null>(null);
+  const vadRef = useRef<{ pause: () => void; start: () => void } | null>(null);
+  // Keep a ref to attached products so VAD callback can access current value
+  const attachedProductsRef = useRef<ProductSummary[]>(attachedProducts);
+  attachedProductsRef.current = attachedProducts;
+  const sending = sendingProp || sendingText;
+
+  const hasContent = !!(text.trim() || imageFile || attachedProducts.length > 0);
+  const showSendButton = inputFocused && hasContent;
 
   useImperativeHandle(ref, () => ({
     focus() {
@@ -155,63 +180,105 @@ const MessageInputInner = forwardRef<MessageInputHandle, Props>(function Message
     },
   }));
 
-  const stopRecording = useCallback(() => {
-    const recorder = mediaRecorderRef.current;
-    if (!recorder || recorder.state === "inactive") {
-      setRecording(false);
+  // Auto-grow textarea height with content (single line by default, grow up to max)
+  useEffect(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    const maxHeight = 112; // 7rem
+    ta.style.height = `${Math.min(ta.scrollHeight, maxHeight)}px`;
+  }, [text]);
+
+  // Start or stop VAD when entering/leaving voice mode
+  useEffect(() => {
+    if (!voiceModeActive || !onSendVoice) {
+      vadRef.current?.pause();
+      vadRef.current = null;
+      setVadLoading(false);
+      setVadError(null);
       return;
     }
-    try {
-      if (recorder.state === "recording") recorder.requestData();
-      recorder.stop();
-    } catch {
-      // ignore
-    }
-    mediaRecorderRef.current = null;
-    setRecording(false);
-  }, []);
+    let mounted = true;
+    setVadError(null);
+    setVadLoading(true);
+    import("@ricky0123/vad-web").then(({ MicVAD }) => {
+      if (!mounted || !voiceModeActive) return;
+      MicVAD.new({
+        baseAssetPath: VAD_BASE_ASSET_PATH,
+        onnxWASMBasePath: VAD_ONNX_WASM_PATH,
+        onSpeechStart: () => setUserSpeaking(true),
+        onSpeechEnd: (audio: Float32Array) => {
+          setUserSpeaking(false);
+          if (audio.length < MIN_VOICE_SAMPLES) return;
+          const file = float32ToWavFile(audio);
+          // Pass attached products to voice handler so backend knows which product user is asking about
+          const productsToSend = attachedProductsRef.current.length > 0 ? [...attachedProductsRef.current] : undefined;
+          onSendVoice(file, productsToSend).catch((err) => console.error("Voice send failed:", err));
+        },
+        minSpeechMs: 300,
+        redemptionMs: 1200,
+        positiveSpeechThreshold: 0.2,
+        negativeSpeechThreshold: 0.2,
+      })
+        .then(async (vad) => {
+          if (!mounted || !voiceModeActive) {
+            vad.pause();
+            return;
+          }
+          vadRef.current = vad;
+          setVadLoading(false);
+          try {
+            if (!sendingProp && !isAISpeaking) await vad.start();
+          } catch (startErr) {
+            console.error("VAD start failed:", startErr);
+            if (mounted) setVadError((startErr as Error)?.message ?? "میکروفون روشن نشد");
+          }
+        })
+        .catch((err) => {
+          console.error("VAD init failed:", err);
+          if (mounted) {
+            setVadError(err?.message ?? "خطا در راه‌اندازی میکروفون");
+            setVadLoading(false);
+          }
+        });
+    }).catch((err) => {
+      console.error("VAD import failed:", err);
+      if (mounted) {
+        setVadError(err?.message ?? "خطا در بارگذاری تشخیص صدا");
+        setVadLoading(false);
+      }
+    });
+    return () => {
+      mounted = false;
+      vadRef.current?.pause();
+      vadRef.current = null;
+      setVadLoading(false);
+    };
+  }, [voiceModeActive, onSendVoice]);
 
-  const startRecording = useCallback(async () => {
-    if (!onSendVoice || disabled || sending) return;
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
-      chunksRef.current = [];
-      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm";
-      const recorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = recorder;
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data);
-      };
-      recorder.onstop = () => {
-        stream.getTracks().forEach((t) => t.stop());
-        streamRef.current = null;
-        const blob = new Blob(chunksRef.current, { type: mimeType });
-        const ext = mimeType.includes("webm") ? "webm" : "ogg";
-        const file = new File([blob], `voice-${Date.now()}.${ext}`, { type: blob.type });
-        setSending(true);
-        onSendVoice(file)
-          .catch((err) => {
-            console.error("Voice send failed:", err);
-          })
-          .finally(() => {
-            setSending(false);
-          });
-      };
-      recorder.start(200);
-      setRecording(true);
-    } catch (err) {
-      console.error("Microphone access failed:", err);
+  // Pause VAD when AI is speaking or when sending; resume when both clear
+  useEffect(() => {
+    const vad = vadRef.current;
+    if (!vad) return;
+    if (isAISpeaking || sendingProp) vad.pause();
+    else if (voiceModeActive) {
+      vad.start().catch((err: unknown) => console.error("VAD resume failed:", err));
     }
-  }, [onSendVoice, disabled, sending]);
+  }, [isAISpeaking, sendingProp, voiceModeActive]);
 
   const handleMicClick = useCallback(() => {
-    if (recording) {
-      stopRecording();
+    if (voiceModeActive) {
+      if (isAISpeaking) onStopAIPlayback?.();
+      vadRef.current?.pause();
+      vadRef.current = null;
+      setVoiceModeActive(false);
+      setUserSpeaking(false);
+      setVadError(null);
     } else {
-      startRecording();
+      if (!onSendVoice || disabled || sending) return;
+      setVoiceModeActive(true);
     }
-  }, [recording, startRecording, stopRecording]);
+  }, [voiceModeActive, isAISpeaking, onStopAIPlayback, onSendVoice, disabled, sending]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -221,11 +288,11 @@ const MessageInputInner = forwardRef<MessageInputHandle, Props>(function Message
     const productsToSend = attachedProducts.length > 0 ? attachedProducts : undefined;
     setText("");
     setImageFile(null);
-    setSending(true);
+    setSendingText(true);
     try {
       await onSend(toSend || "(Image)", fileToSend, productsToSend);
     } finally {
-      setSending(false);
+      setSendingText(false);
     }
   }
 
@@ -288,7 +355,7 @@ const MessageInputInner = forwardRef<MessageInputHandle, Props>(function Message
             )}
           </div>
         )}
-        <div className="flex items-center py-2 px-2 gap-1 rounded-3xl border border-border bg-background focus-within:border-foreground/15 focus-within:ring-1 focus-within:ring-ring/15 transition-all overflow-hidden">
+        <div className="flex items-end py-1.5 px-2 gap-1 rounded-2xl border border-border bg-background focus-within:border-foreground/15 focus-within:ring-1 focus-within:ring-ring/15 transition-all overflow-hidden">
         <input
           ref={fileInputRef}
           type="file"
@@ -296,27 +363,11 @@ const MessageInputInner = forwardRef<MessageInputHandle, Props>(function Message
           className="hidden"
           onChange={(e) => setImageFile(e.target.files?.[0] ?? null)}
         />
-        {onSendVoice && (
-          <button
-            type="button"
-            onClick={handleMicClick}
-            disabled={disabled || sending}
-            className={`flex items-center justify-center w-9 h-9 shrink-0 rounded-lg transition-colors disabled:opacity-50 disabled:pointer-events-none ml-1 ${
-              recording
-                ? "text-destructive bg-destructive/10 hover:bg-destructive/20 animate-pulse"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-            title={recording ? "Stop and send voice" : "Send voice message"}
-            aria-label={recording ? "Stop and send voice" : "Send voice message"}
-          >
-            {recording ? <IconSquare /> : <IconMic />}
-          </button>
-        )}
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
-          disabled={disabled || sending || recording}
-          className="flex items-center justify-center w-9 h-9 shrink-0 text-muted-foreground hover:text-foreground rounded-lg transition-colors disabled:opacity-50 disabled:pointer-events-none"
+          disabled={disabled || sending || voiceModeActive}
+          className="flex items-center justify-center w-8 h-8 shrink-0 text-muted-foreground hover:text-foreground rounded-lg transition-colors disabled:opacity-50 disabled:pointer-events-none ml-0.5"
           title="Attach image"
           aria-label="Attach image"
         >
@@ -326,25 +377,102 @@ const MessageInputInner = forwardRef<MessageInputHandle, Props>(function Message
           ref={textareaRef}
           value={text}
           onChange={(e) => setText(e.target.value)}
+          onFocus={() => setInputFocused(true)}
+          onBlur={() => setInputFocused(false)}
           onKeyDown={handleKeyDown}
           placeholder="Message…"
           rows={1}
-          className="min-h-[20px] max-h-28 resize-none flex-1 rounded-none border-0 bg-transparent shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 py-2.5 px-2 text-sm placeholder:text-muted-foreground"
-          disabled={disabled || sending || recording}
+          className="!min-h-[22px] max-h-28 resize-none flex-1 rounded-none border-0 bg-transparent shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 py-1.5 px-2 text-sm placeholder:text-muted-foreground leading-tight"
+          disabled={disabled || sending || voiceModeActive}
         />
-        <button
-          type="submit"
-          disabled={(!text.trim() && !imageFile && attachedProducts.length === 0) || sending || disabled || recording}
-          className="flex items-center justify-center w-9 h-9 shrink-0 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:pointer-events-none mr-1"
-          title="Send"
-          aria-label="Send message"
-        >
-          {sending ? (
-            <IconLoader className="text-primary-foreground" />
-          ) : (
-            <IconSend />
-          )}
-        </button>
+        {showSendButton ? (
+          <button
+            type="submit"
+            disabled={!hasContent || sending || disabled || voiceModeActive}
+            className="flex items-center justify-center w-8 h-8 shrink-0 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:pointer-events-none mr-0.5"
+            title="Send"
+            aria-label="Send message"
+          >
+            {sending ? (
+              <IconLoader className="text-primary-foreground size-4" />
+            ) : (
+              <IconSend />
+            )}
+          </button>
+        ) : onSendVoice ? (
+          (() => {
+            const voiceState: VoiceUIState = !voiceModeActive
+              ? "idle"
+              : vadError
+                ? "idle"
+                : sendingProp
+                  ? "processing"
+                  : isAISpeaking
+                    ? "aiSpeaking"
+                    : userSpeaking
+                      ? "userSpeaking"
+                      : "listening";
+            const micTitle = vadError
+              ? vadError + " (کلیک برای بستن)"
+              : voiceState === "idle"
+                ? "روشن کردن حالت صوتی (ارسال خودکار بعد از صحبت)"
+                : voiceState === "listening"
+                  ? (vadLoading ? "در حال راه‌اندازی میکروفون…" : "در حال گوش دادن… کلیک برای خاموش کردن")
+                  : voiceState === "userSpeaking"
+                    ? "در حال صحبت… کلیک برای خاموش کردن"
+                    : voiceState === "processing"
+                      ? "در حال ارسال…"
+                      : "ربات در حال صحبت است. کلیک برای خاموش یا قطع";
+            return (
+              <button
+                type="button"
+                onClick={handleMicClick}
+                disabled={disabled || (sending && !voiceModeActive)}
+                className={`flex items-center justify-center w-8 h-8 shrink-0 rounded-xl transition-colors disabled:opacity-50 disabled:pointer-events-none mr-0.5 ${
+                  vadError
+                    ? "text-destructive bg-destructive/15 hover:bg-destructive/25"
+                    : voiceState === "idle"
+                      ? "text-muted-foreground hover:text-foreground"
+                      : voiceState === "listening"
+                        ? "text-destructive/80 bg-destructive/10 hover:bg-destructive/20"
+                        : voiceState === "userSpeaking"
+                          ? "text-destructive bg-destructive/20 hover:bg-destructive/30 animate-pulse"
+                          : voiceState === "processing"
+                            ? "text-muted-foreground bg-muted"
+                            : "text-green-600 dark:text-green-500 bg-green-500/15 hover:bg-green-500/25"
+                }`}
+                title={micTitle}
+                aria-label={micTitle}
+              >
+                {vadLoading ? (
+                  <IconLoader className="text-muted-foreground" />
+                ) : voiceState === "processing" ? (
+                  <IconLoader className="text-muted-foreground" />
+                ) : voiceState === "aiSpeaking" ? (
+                  <IconWaveform />
+                ) : voiceModeActive ? (
+                  <IconSquare />
+                ) : (
+                  <AudioLines className="size-4" />
+                )}
+              </button>
+            );
+          })()
+        ) : (
+          <button
+            type="submit"
+            disabled={!hasContent || sending || disabled}
+            className="flex items-center justify-center w-8 h-8 shrink-0 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:pointer-events-none mr-0.5"
+            title="Send"
+            aria-label="Send message"
+          >
+            {sending ? (
+              <IconLoader className="text-primary-foreground size-4" />
+            ) : (
+              <IconSend />
+            )}
+          </button>
+        )}
       </div>
     </form>
     </div>

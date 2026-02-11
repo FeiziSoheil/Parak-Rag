@@ -159,7 +159,7 @@ export function SessionSidebar({ currentSessionId, onNewSession, onSelectSession
           </div>
           <div className="min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
             <p className="text-sm font-medium truncate">
-              {[user?.first_name, user?.last_name].filter(Boolean).join(" ") || user?.username ?? "…"}
+              {[user?.first_name, user?.last_name].filter(Boolean).join(" ") || (user?.username ?? "…")}
             </p>
             {user?.email && (
               <p className="text-xs text-muted-foreground truncate" title={user.email}>

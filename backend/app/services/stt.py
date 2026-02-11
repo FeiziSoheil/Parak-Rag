@@ -1,5 +1,8 @@
 """Speech-to-Text using faster-whisper. Singleton model; int8 for GPU/CPU to avoid OOM on limited VRAM."""
+# reload trigger
 import logging
+import os
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -13,6 +16,14 @@ logger = logging.getLogger(__name__)
 WHISPER_SAMPLE_RATE = 16000
 
 
+def _get_ffmpeg_path() -> Optional[str]:
+    """Resolve ffmpeg executable: FFMPEG_PATH env first, then PATH via shutil.which."""
+    explicit = os.getenv("FFMPEG_PATH", "").strip()
+    if explicit and Path(explicit).exists():
+        return explicit
+    return shutil.which("ffmpeg")
+
+
 def convert_to_wav_16k(source_path: str) -> Optional[str]:
     """
     Convert any audio file (e.g. WebM/Opus from browser) to 16kHz mono WAV so Whisper decodes reliably.
@@ -20,6 +31,12 @@ def convert_to_wav_16k(source_path: str) -> Optional[str]:
     """
     path = Path(source_path)
     if not path.exists() or not path.is_file():
+        return None
+    ffmpeg_cmd = _get_ffmpeg_path()
+    if not ffmpeg_cmd:
+        logger.warning(
+            "ffmpeg not found (set FFMPEG_PATH to full path, e.g. C:\\ffmpeg\\...\\bin\\ffmpeg.exe, or add ffmpeg to PATH)"
+        )
         return None
     try:
         out = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
@@ -31,7 +48,7 @@ def convert_to_wav_16k(source_path: str) -> Optional[str]:
     try:
         subprocess.run(
             [
-                "ffmpeg",
+                ffmpeg_cmd,
                 "-y",
                 "-i", str(path),
                 "-acodec", "pcm_s16le",

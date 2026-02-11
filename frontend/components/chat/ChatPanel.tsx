@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { TrendingUp, Search, ShoppingCart, CreditCard } from "lucide-react";
 import { MessageList, type MessageEntry, type SuggestedPromptItem } from "./MessageList";
 import { MessageInput, type MessageInputHandle } from "./MessageInput";
 import { Skeleton } from "@/components/ui/skeleton";
-import { getCurrentUser, getSessionMessages, sendChat, sendVoiceChat, type ProductSummary, type UserProfile } from "@/lib/api";
+import { getCurrentUser, getSessionMessages, sendChat, sendVoiceChat, detectIntent, voiceDetectIntent, type ProductSummary, type UserProfile } from "@/lib/api";
 
 function getDisplayName(user: UserProfile | null): string {
   if (!user) return "";
@@ -43,10 +43,47 @@ export function ChatPanel({ sessionId }: Props) {
   const [selectedProducts, setSelectedProducts] = useState<ProductSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
+  /** True when current request triggers Qdrant search (product/FAQ/store). Show ShinyText only then. */
+  const [expectsQdrantSearch, setExpectsQdrantSearch] = useState(false);
   const [user, setUser] = useState<UserProfile | null>(null);
   const messageInputRef = useRef<MessageInputHandle>(null);
   /** Unique negative ids for new messages in this session (so typewriter runs for each new assistant message). */
   const nextTempIdRef = useRef(-1);
+  /** When AI voice response is playing; VAD must be paused to avoid feedback loop. */
+  const [isAISpeaking, setAISpeaking] = useState(false);
+  const voiceAudioRef = useRef<HTMLAudioElement | null>(null);
+  const audioEndDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleAudioPlayStart = useCallback(() => {
+    if (audioEndDelayRef.current) {
+      clearTimeout(audioEndDelayRef.current);
+      audioEndDelayRef.current = null;
+    }
+    setAISpeaking(true);
+  }, []);
+
+  const handleAudioPlayEnd = useCallback(() => {
+    if (audioEndDelayRef.current) clearTimeout(audioEndDelayRef.current);
+    audioEndDelayRef.current = setTimeout(() => {
+      setAISpeaking(false);
+      audioEndDelayRef.current = null;
+    }, 500);
+  }, []);
+
+  const stopAIPlayback = useCallback(() => {
+    if (audioEndDelayRef.current) {
+      clearTimeout(audioEndDelayRef.current);
+      audioEndDelayRef.current = null;
+    }
+    setAISpeaking(false);
+    voiceAudioRef.current?.pause();
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (audioEndDelayRef.current) clearTimeout(audioEndDelayRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     getCurrentUser().then(setUser);
@@ -126,7 +163,17 @@ export function ChatPanel({ sessionId }: Props) {
     };
     setMessages((prev) => [...prev, userMessage]);
     if (productsToAttach.length > 0) setSelectedProducts([]);
+    
+    // Use LLM-based intent detection (works for any language)
     setSending(true);
+    try {
+      const intentResult = await detectIntent(trimmedMessage, !!imageFile);
+      setExpectsQdrantSearch(intentResult.needs_qdrant_search);
+    } catch {
+      // Fallback: assume search needed if detection fails
+      setExpectsQdrantSearch(!!imageFile || trimmedMessage.length > 15);
+    }
+    
     try {
       const { message: responseText, products } = await sendChat(
         sessionId,
@@ -151,12 +198,36 @@ export function ChatPanel({ sessionId }: Props) {
     }
   }
 
-  async function handleSendVoice(voiceFile: File) {
+  async function handleSendVoice(voiceFile: File, attachedProducts?: ProductSummary[]) {
     if (!sessionId) return;
+    
+    // Use attached products from parameter or current selection
+    const productsToAttach = attachedProducts ?? selectedProducts;
+    
+    // First: transcribe and detect intent (to show appropriate loader)
     setSending(true);
+    let transcribedText = "";
     try {
-      const { message: responseText, products, audio_base64, transcribed_text } = await sendVoiceChat(sessionId, voiceFile);
-      const userContent = (transcribed_text && transcribed_text.trim()) ? transcribed_text.trim() : "پیام صوتی";
+      const intentResult = await voiceDetectIntent(voiceFile);
+      transcribedText = intentResult.transcribed_text || "";
+      // If products are attached, always expect Qdrant search (user is asking about specific products)
+      setExpectsQdrantSearch(productsToAttach.length > 0 || intentResult.needs_qdrant_search);
+    } catch {
+      // Fallback: assume search needed if detection fails
+      setExpectsQdrantSearch(true);
+    }
+    
+    // Clear selected products after capturing them
+    if (productsToAttach.length > 0) setSelectedProducts([]);
+    
+    // Then: send voice chat for full response (with selected products)
+    try {
+      const { message: responseText, products, audio_base64, transcribed_text } = await sendVoiceChat(
+        sessionId,
+        voiceFile,
+        productsToAttach.length > 0 ? productsToAttach : undefined
+      );
+      const userContent = (transcribed_text && transcribed_text.trim()) ? transcribed_text.trim() : (transcribedText || "Voice message");
       setMessages((prev) => [
         ...prev,
         {
@@ -164,6 +235,8 @@ export function ChatPanel({ sessionId }: Props) {
           role: "user",
           content: userContent,
           image_url: null,
+          // Show attached products in user message bubble
+          attachedProducts: productsToAttach.length > 0 ? productsToAttach : undefined,
         },
         {
           id: nextTempIdRef.current--,
@@ -175,13 +248,13 @@ export function ChatPanel({ sessionId }: Props) {
         },
       ]);
     } catch (err) {
-      console.error("ارسال پیام صوتی ناموفق:", err);
+      console.error("Voice message failed:", err);
       setMessages((prev) => [
         ...prev,
         {
           id: nextTempIdRef.current--,
           role: "assistant",
-          content: "متأسفانه ارسال پیام صوتی انجام نشد. لطفاً دوباره امتحان کنید یا از متن استفاده کنید.",
+          content: "Sorry, voice message failed. Please try again or use text.",
           image_url: null,
         },
       ]);
@@ -256,23 +329,30 @@ export function ChatPanel({ sessionId }: Props) {
             <MessageList
               messages={messages}
               sending={sending}
+              expectsQdrantSearch={expectsQdrantSearch}
               welcomeMessage={newChatWelcome}
               suggestedPrompts={messages.length === 0 ? SUGGESTED_PROMPTS : undefined}
               onSuggestedPromptClick={(text) => void handleSend(text, null)}
               onRegenerate={handleRegenerate}
               selectedProductIds={new Set(selectedProducts.map((p) => p.product_id))}
               onProductSelect={toggleProductSelection}
+              voiceAudioRef={voiceAudioRef}
+              onAudioPlayStart={handleAudioPlayStart}
+              onAudioPlayEnd={handleAudioPlayEnd}
             />
           )}
         </div>
         <div className="shrink-0">
           <MessageInput
             ref={messageInputRef}
-            disabled={loading || sending}
+            disabled={loading}
+            sending={sending}
             onSend={handleSend}
             onSendVoice={handleSendVoice}
             attachedProducts={selectedProducts}
             onRemoveProduct={removeSelectedProduct}
+            isAISpeaking={isAISpeaking}
+            onStopAIPlayback={stopAIPlayback}
           />
         </div>
       </div>

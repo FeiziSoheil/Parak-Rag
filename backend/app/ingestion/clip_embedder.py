@@ -19,6 +19,8 @@ CLIP_VECTOR_SIZE = 512
 
 # Longer timeout for slow networks (HuggingFace download); 10 minutes
 HF_DOWNLOAD_TIMEOUT_SEC = 600
+# If set to "1", no Hub requests (avoids Thread-auto_conversion timeout after load). Use when model is already cached.
+# Example: set HF_HUB_OFFLINE=1 in env before starting the server to suppress the auto_conversion exception.
 
 # Lazy-loaded state
 _model = None

@@ -220,12 +220,20 @@ export async function deleteSession(sessionId: number): Promise<void> {
   if (!res.ok) throw new Error("Failed to delete session");
 }
 
+export type ProductVariant = {
+  name?: string;
+  color?: string;
+  price?: number | null;
+};
+
 export type ProductSummary = {
   product_id: number;
   subject: string;
   price: number | null;
   image_url: string | null;
   category_name: string;
+  /** Product variants (colors, sizes, etc.) with their prices */
+  variants?: ProductVariant[];
 };
 
 /** We use a proxy for product images so CDNs (e.g. AliExpress) don't block the image. */
@@ -336,6 +344,60 @@ export async function getIngestStatus(): Promise<IngestStatus> {
   return res.json();
 }
 
+export type DetectIntentResult = {
+  needs_qdrant_search: boolean;
+  intent_type: "product_search" | "store_info" | "faq" | "chitchat" | "greeting" | "unknown";
+  confidence: number;
+};
+
+export type VoiceDetectIntentResult = DetectIntentResult & {
+  transcribed_text: string;
+};
+
+/**
+ * Detect user intent using LLM. Call before sendChat to show appropriate loading indicator.
+ * Works for any language without hardcoded keywords.
+ */
+export async function detectIntent(message: string, hasImage: boolean = false): Promise<DetectIntentResult> {
+  const token = getToken();
+  if (!token) throw new Error("Not authenticated");
+  const formData = new FormData();
+  formData.append("message", message);
+  formData.append("has_image", String(hasImage));
+  const res = await fetch(`${API_BASE}/api/detect-intent`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: formData,
+  });
+  if (!res.ok) {
+    // Fallback: assume search needed on error
+    return { needs_qdrant_search: true, intent_type: "unknown", confidence: 0.5 };
+  }
+  return res.json();
+}
+
+/**
+ * Transcribe voice and detect intent using LLM.
+ * Call before sendVoiceChat to show appropriate loading indicator.
+ * Returns transcribed text + intent detection result.
+ */
+export async function voiceDetectIntent(voiceFile: File): Promise<VoiceDetectIntentResult> {
+  const token = getToken();
+  if (!token) throw new Error("Not authenticated");
+  const formData = new FormData();
+  formData.append("voice", voiceFile);
+  const res = await fetch(`${API_BASE}/api/voice-detect-intent`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: formData,
+  });
+  if (!res.ok) {
+    // Fallback: assume search needed on error
+    return { transcribed_text: "", needs_qdrant_search: true, intent_type: "unknown", confidence: 0.5 };
+  }
+  return res.json();
+}
+
 export type SendChatResult = { message: string; products: ProductSummary[] };
 
 export async function sendChat(
@@ -373,13 +435,18 @@ export type SendVoiceChatResult = {
 
 export async function sendVoiceChat(
   sessionId: number,
-  voiceFile: File
+  voiceFile: File,
+  selectedProducts?: ProductSummary[]
 ): Promise<SendVoiceChatResult> {
   const token = getToken();
   if (!token) throw new Error("Not authenticated");
   const formData = new FormData();
   formData.append("session_id", String(sessionId));
   formData.append("voice", voiceFile);
+  // Send selected products as JSON so backend knows which product(s) user is asking about
+  if (selectedProducts && selectedProducts.length > 0) {
+    formData.append("selected_products", JSON.stringify(selectedProducts));
+  }
   const res = await fetch(`${API_BASE}/api/voice-chat`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },

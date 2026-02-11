@@ -6,10 +6,12 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "postinstall": "node scripts/copy-onnx-wasm.js"
   },
-  "dependencies": {
-    "@radix-ui/react-dialog": "^1.1.15",
+"dependencies": {
+  "@ricky0123/vad-web": "^0.0.27",
+  "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-slot": "^1.2.4",
     "@radix-ui/react-tooltip": "^1.2.8",
     "class-variance-authority": "^0.7.1",
