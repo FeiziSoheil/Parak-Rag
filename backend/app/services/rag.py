@@ -185,7 +185,8 @@ def analyze_collection_data() -> dict:
 
 SYSTEM_PROMPT = """You are a helpful product assistant.
 
-- The context below may contain three sections: "--- Store Information ---" (address, hours, contact), "--- FAQ ---" (Q&A about orders, returns, payment, delivery), and "--- Relevant Products ---". Use all provided sections to answer; e.g. for return policy use the FAQ section, for "where are you" use Store Information.
+- **Language:** Always respond in the same language the user used for their message (e.g. if they ask in English, answer in English; if in Persian/Farsi, answer in Persian; if in another language, answer in that language). Do not switch language unless the user switches.
+- The context below may contain three sections: "--- Store Information ---" (address, hours, contact), "--- FAQ ---" (Q&A about orders, returns, payment, delivery), and "--- Relevant Products ---". Use all provided sections to answer; e.g. for return policy use the FAQ section, for "where are you" or "store name" use Store Information.
 - Use the conversation history for: the user's name, greetings, "how are you", "what's my name", and any non-product chit-chat. Remember what the user said (e.g. their name) and use it in later replies.
 - For product-related questions (e.g. "find me X", "do you have Y"): answer only from the provided product context. If the context says "No relevant products found" or does not contain the product, politely say you don't have that in your catalog and suggest trying different keywords.
 - When you have found products in the context: give a short reply (e.g. "Here are some options:" or "I found these products for you:") and do not list all product names in your message—product images and details are shown in cards below your message.
@@ -262,19 +263,23 @@ def search_store(
     top_k: int = 3,
     score_threshold: float = RAG_SCORE_THRESHOLD,
 ) -> list[dict]:
-    """Search store collection; return points with score >= score_threshold."""
+    """Search store collection; return points with score >= score_threshold. Fallback to lower threshold if no results (so any-language queries still match)."""
     client = QdrantClient(url=QDRANT_URL)
     ensure_collection(client, QDRANT_COLLECTION_STORE)
-    try:
-        response = client.query_points(
-            collection_name=QDRANT_COLLECTION_STORE,
-            query=query_vector,
-            limit=top_k,
-            score_threshold=score_threshold,
-        )
-        return [{"payload": r.payload, "score": r.score} for r in response.points]
-    except Exception:
-        return []
+    for thr in (score_threshold, 0.25, 0.0):
+        try:
+            response = client.query_points(
+                collection_name=QDRANT_COLLECTION_STORE,
+                query=query_vector,
+                limit=top_k,
+                score_threshold=thr,
+            )
+            points = [{"payload": r.payload, "score": r.score} for r in response.points]
+            if points:
+                return points
+        except Exception:
+            pass
+    return []
 
 
 def search_faq(
@@ -282,19 +287,23 @@ def search_faq(
     top_k: int = 5,
     score_threshold: float = RAG_SCORE_THRESHOLD,
 ) -> list[dict]:
-    """Search FAQ collection; return points with score >= score_threshold."""
+    """Search FAQ collection; return points with score >= score_threshold. Fallback to lower threshold if no results (so any-language queries still match)."""
     client = QdrantClient(url=QDRANT_URL)
     ensure_collection(client, QDRANT_COLLECTION_FAQ)
-    try:
-        response = client.query_points(
-            collection_name=QDRANT_COLLECTION_FAQ,
-            query=query_vector,
-            limit=top_k,
-            score_threshold=score_threshold,
-        )
-        return [{"payload": r.payload, "score": r.score} for r in response.points]
-    except Exception:
-        return []
+    for thr in (score_threshold, 0.25, 0.0):
+        try:
+            response = client.query_points(
+                collection_name=QDRANT_COLLECTION_FAQ,
+                query=query_vector,
+                limit=top_k,
+                score_threshold=thr,
+            )
+            points = [{"payload": r.payload, "score": r.score} for r in response.points]
+            if points:
+                return points
+        except Exception:
+            pass
+    return []
 
 
 def build_combined_context(
@@ -313,7 +322,7 @@ def build_combined_context(
                 name = p.get("name") or ""
                 address = p.get("address") or ""
                 phone = p.get("phone") or ""
-                ctx = f"نام فروشگاه: {name} آدرس: {address} تلفن: {phone}".strip()
+                ctx = f"Store name / نام فروشگاه: {name}  Address / آدرس: {address}  Phone / تلفن: {phone}".strip()
             if ctx:
                 parts.append(ctx)
         if parts:

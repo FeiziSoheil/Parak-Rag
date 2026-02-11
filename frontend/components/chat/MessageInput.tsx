@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useCallback, useImperativeHandle, useRef, useState } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import type { ProductSummary } from "@/lib/api";
 
@@ -9,6 +9,7 @@ export type MessageInputHandle = { focus: () => void };
 type Props = {
   disabled?: boolean;
   onSend: (message: string, imageFile: File | null, attachedProducts?: ProductSummary[]) => Promise<void>;
+  onSendVoice?: (voiceFile: File) => Promise<void>;
   attachedProducts?: ProductSummary[];
   onRemoveProduct?: (productId: number) => void;
 };
@@ -96,21 +97,121 @@ function IconLoader({ className }: { className?: string }) {
   );
 }
 
+function IconMic({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden
+    >
+      <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+      <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+      <line x1="12" x2="12" y1="19" y2="22" />
+    </svg>
+  );
+}
+
+function IconSquare({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      className={className}
+      aria-hidden
+    >
+      <rect width="14" height="14" x="5" y="5" rx="2" />
+    </svg>
+  );
+}
+
 const MessageInputInner = forwardRef<MessageInputHandle, Props>(function MessageInput(
-  { disabled, onSend, attachedProducts = [], onRemoveProduct },
+  { disabled, onSend, onSendVoice, attachedProducts = [], onRemoveProduct },
   ref
 ) {
   const [text, setText] = useState("");
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [sending, setSending] = useState(false);
+  const [recording, setRecording] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const streamRef = useRef<MediaStream | null>(null);
 
   useImperativeHandle(ref, () => ({
     focus() {
       textareaRef.current?.focus();
     },
   }));
+
+  const stopRecording = useCallback(() => {
+    const recorder = mediaRecorderRef.current;
+    if (!recorder || recorder.state === "inactive") {
+      setRecording(false);
+      return;
+    }
+    try {
+      if (recorder.state === "recording") recorder.requestData();
+      recorder.stop();
+    } catch {
+      // ignore
+    }
+    mediaRecorderRef.current = null;
+    setRecording(false);
+  }, []);
+
+  const startRecording = useCallback(async () => {
+    if (!onSendVoice || disabled || sending) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      chunksRef.current = [];
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm";
+      const recorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunksRef.current.push(e.data);
+      };
+      recorder.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+        const blob = new Blob(chunksRef.current, { type: mimeType });
+        const ext = mimeType.includes("webm") ? "webm" : "ogg";
+        const file = new File([blob], `voice-${Date.now()}.${ext}`, { type: blob.type });
+        setSending(true);
+        onSendVoice(file)
+          .catch((err) => {
+            console.error("Voice send failed:", err);
+          })
+          .finally(() => {
+            setSending(false);
+          });
+      };
+      recorder.start(200);
+      setRecording(true);
+    } catch (err) {
+      console.error("Microphone access failed:", err);
+    }
+  }, [onSendVoice, disabled, sending]);
+
+  const handleMicClick = useCallback(() => {
+    if (recording) {
+      stopRecording();
+    } else {
+      startRecording();
+    }
+  }, [recording, startRecording, stopRecording]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -195,11 +296,27 @@ const MessageInputInner = forwardRef<MessageInputHandle, Props>(function Message
           className="hidden"
           onChange={(e) => setImageFile(e.target.files?.[0] ?? null)}
         />
+        {onSendVoice && (
+          <button
+            type="button"
+            onClick={handleMicClick}
+            disabled={disabled || sending}
+            className={`flex items-center justify-center w-9 h-9 shrink-0 rounded-lg transition-colors disabled:opacity-50 disabled:pointer-events-none ml-1 ${
+              recording
+                ? "text-destructive bg-destructive/10 hover:bg-destructive/20 animate-pulse"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+            title={recording ? "Stop and send voice" : "Send voice message"}
+            aria-label={recording ? "Stop and send voice" : "Send voice message"}
+          >
+            {recording ? <IconSquare /> : <IconMic />}
+          </button>
+        )}
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
-          disabled={disabled || sending}
-          className="flex items-center justify-center w-9 h-9 shrink-0 text-muted-foreground hover:text-foreground rounded-lg transition-colors disabled:opacity-50 disabled:pointer-events-none ml-1"
+          disabled={disabled || sending || recording}
+          className="flex items-center justify-center w-9 h-9 shrink-0 text-muted-foreground hover:text-foreground rounded-lg transition-colors disabled:opacity-50 disabled:pointer-events-none"
           title="Attach image"
           aria-label="Attach image"
         >
@@ -213,11 +330,11 @@ const MessageInputInner = forwardRef<MessageInputHandle, Props>(function Message
           placeholder="Message…"
           rows={1}
           className="min-h-[20px] max-h-28 resize-none flex-1 rounded-none border-0 bg-transparent shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 py-2.5 px-2 text-sm placeholder:text-muted-foreground"
-          disabled={disabled || sending}
+          disabled={disabled || sending || recording}
         />
         <button
           type="submit"
-          disabled={(!text.trim() && !imageFile && attachedProducts.length === 0) || sending || disabled}
+          disabled={(!text.trim() && !imageFile && attachedProducts.length === 0) || sending || disabled || recording}
           className="flex items-center justify-center w-9 h-9 shrink-0 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:pointer-events-none mr-1"
           title="Send"
           aria-label="Send message"

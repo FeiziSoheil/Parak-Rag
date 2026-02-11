@@ -1,4 +1,5 @@
 """Store product vectors in Qdrant. Idempotent: use deterministic UUIDs from product_id (and img idx) as point id."""
+import logging
 import uuid
 
 from qdrant_client import QdrantClient
@@ -8,6 +9,7 @@ from app.config import QDRANT_URL, QDRANT_COLLECTION, QDRANT_COLLECTION_STORE, Q
 from app.ingestion.clip_embedder import get_embedder, embed_texts, embed_image_url, get_embedding_dim
 
 # برای id یکتا و قطعی (re-ingest همان نقطه را overwrite می‌کند)
+_log = logging.getLogger(__name__)
 _POINT_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_DNS, "qdrant.products.local")
 _POINT_NAMESPACE_STORE = uuid.uuid5(uuid.NAMESPACE_DNS, "qdrant.store.local")
 _POINT_NAMESPACE_FAQ = uuid.uuid5(uuid.NAMESPACE_DNS, "qdrant.faq.local")
@@ -100,7 +102,8 @@ def store_products(embedder, products: list[dict], collection: str = QDRANT_COLL
         for idx, url in enumerate(image_urls[:3]):
             try:
                 vec = embed_image_url(url)
-            except Exception:
+            except Exception as e:
+                _log.warning("Image embed skipped for product_id=%s url=%s: %s", prod.get("product_id"), url[:80] if url else "", e)
                 continue
             pid = prod["product_id"]
             payload = {

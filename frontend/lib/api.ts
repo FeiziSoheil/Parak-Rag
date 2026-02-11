@@ -362,3 +362,32 @@ export async function sendChat(
   }
   return res.json();
 }
+
+export type SendVoiceChatResult = {
+  message: string;
+  products: ProductSummary[];
+  /** متن ترنسکریب‌شده از صدای کاربر (STT) */
+  transcribed_text: string;
+  audio_base64?: string;
+};
+
+export async function sendVoiceChat(
+  sessionId: number,
+  voiceFile: File
+): Promise<SendVoiceChatResult> {
+  const token = getToken();
+  if (!token) throw new Error("Not authenticated");
+  const formData = new FormData();
+  formData.append("session_id", String(sessionId));
+  formData.append("voice", voiceFile);
+  const res = await fetch(`${API_BASE}/api/voice-chat`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: formData,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail || "Voice chat failed");
+  }
+  return res.json();
+}

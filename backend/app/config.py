@@ -66,3 +66,11 @@ VERIFICATION_CODE_LOCK_MINUTES = 60 * 2  # 2 hours lock after max requests
 
 # Avatar uploads (relative to backend)
 AVATAR_UPLOAD_DIR = BASE_DIR / "uploads" / "avatars"
+
+# Voice (STT/TTS)
+VOICE_TEMP_DIR = BASE_DIR / "temp" / "voice"
+WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "small")
+TTS_VOICE_FA = os.getenv("TTS_VOICE_FA", "fa-IR-DilaraNeural")
+TTS_VOICE_EN = os.getenv("TTS_VOICE_EN", "en-US-JennyNeural")
+TTS_VOICE_TR = os.getenv("TTS_VOICE_TR", "tr-TR-EmelNeural")
+TTS_VOICE = os.getenv("TTS_VOICE", "fa-IR-DilaraNeural")

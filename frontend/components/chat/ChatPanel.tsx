@@ -5,7 +5,7 @@ import { TrendingUp, Search, ShoppingCart, CreditCard } from "lucide-react";
 import { MessageList, type MessageEntry, type SuggestedPromptItem } from "./MessageList";
 import { MessageInput, type MessageInputHandle } from "./MessageInput";
 import { Skeleton } from "@/components/ui/skeleton";
-import { getCurrentUser, getSessionMessages, sendChat, type ProductSummary, type UserProfile } from "@/lib/api";
+import { getCurrentUser, getSessionMessages, sendChat, sendVoiceChat, type ProductSummary, type UserProfile } from "@/lib/api";
 
 function getDisplayName(user: UserProfile | null): string {
   if (!user) return "";
@@ -151,6 +151,45 @@ export function ChatPanel({ sessionId }: Props) {
     }
   }
 
+  async function handleSendVoice(voiceFile: File) {
+    if (!sessionId) return;
+    setSending(true);
+    try {
+      const { message: responseText, products, audio_base64, transcribed_text } = await sendVoiceChat(sessionId, voiceFile);
+      const userContent = (transcribed_text && transcribed_text.trim()) ? transcribed_text.trim() : "پیام صوتی";
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: nextTempIdRef.current--,
+          role: "user",
+          content: userContent,
+          image_url: null,
+        },
+        {
+          id: nextTempIdRef.current--,
+          role: "assistant",
+          content: responseText,
+          image_url: null,
+          products: products?.length ? products : undefined,
+          audioBase64: audio_base64 ?? undefined,
+        },
+      ]);
+    } catch (err) {
+      console.error("ارسال پیام صوتی ناموفق:", err);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: nextTempIdRef.current--,
+          role: "assistant",
+          content: "متأسفانه ارسال پیام صوتی انجام نشد. لطفاً دوباره امتحان کنید یا از متن استفاده کنید.",
+          image_url: null,
+        },
+      ]);
+    } finally {
+      setSending(false);
+    }
+  }
+
   function handleRegenerate() {
     const len = messages.length;
     if (len < 2) return;
@@ -231,6 +270,7 @@ export function ChatPanel({ sessionId }: Props) {
             ref={messageInputRef}
             disabled={loading || sending}
             onSend={handleSend}
+            onSendVoice={handleSendVoice}
             attachedProducts={selectedProducts}
             onRemoveProduct={removeSelectedProduct}
           />

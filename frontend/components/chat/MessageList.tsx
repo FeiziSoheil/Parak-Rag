@@ -22,6 +22,8 @@ export type MessageEntry = {
   products?: ProductSummary[];
   /** Products attached by the user to this message (user messages only) */
   attachedProducts?: ProductSummary[];
+  /** Base64-encoded MP3 from voice-chat response (assistant messages only) */
+  audioBase64?: string;
   created_at?: string;
 };
 
@@ -238,6 +240,7 @@ export function MessageList({ messages, sending, welcomeMessage, suggestedPrompt
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [typewriterCompleteIds, setTypewriterCompleteIds] = useState<Set<number>>(() => new Set());
   const hadMessagesRef = useRef(false);
+  const lastVoiceAudioRef = useRef<HTMLAudioElement | null>(null);
 
   // When switching session, clear typewriter state
   useEffect(() => {
@@ -348,12 +351,24 @@ export function MessageList({ messages, sending, welcomeMessage, suggestedPrompt
                 </div>
               )}
               {m.role === "assistant" ? (
-                <AssistantMessageContent
-                  content={m.content}
-                  messageId={m.id}
-                  typewriterCompleteIds={typewriterCompleteIds}
-                  onTypewriterComplete={(id) => setTypewriterCompleteIds((prev) => new Set(prev).add(id))}
-                />
+                <>
+                  <AssistantMessageContent
+                    content={m.content}
+                    messageId={m.id}
+                    typewriterCompleteIds={typewriterCompleteIds}
+                    onTypewriterComplete={(id) => setTypewriterCompleteIds((prev) => new Set(prev).add(id))}
+                  />
+                  {m.audioBase64 && idx === messages.length - 1 && !sending && (
+                    <audio
+                      ref={lastVoiceAudioRef}
+                      src={`data:audio/mpeg;base64,${m.audioBase64}`}
+                      autoPlay
+                      className="hidden"
+                      aria-hidden
+                      onLoadedData={() => lastVoiceAudioRef.current?.play().catch(() => {})}
+                    />
+                  )}
+                </>
               ) : (
                 <>
                   {m.content ? (

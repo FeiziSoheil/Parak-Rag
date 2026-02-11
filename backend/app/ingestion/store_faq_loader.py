@@ -74,32 +74,32 @@ def load_faq_from_json(path: str | Path) -> list[dict]:
 
 
 def build_store_context_text(record: dict) -> str:
-    """Build context_text with prefix for store (for embedding and LLM)."""
+    """Build context_text with bilingual labels so queries in any language match (embedding + LLM)."""
     parts = []
     if record.get("name"):
-        parts.append(f"نام فروشگاه: {record['name']}")
+        parts.append(f"Store name / نام فروشگاه: {record['name']}")
     if record.get("description"):
-        parts.append(f"توضیحات: {record['description']}")
+        parts.append(f"Description / توضیحات: {record['description']}")
     if record.get("address"):
-        parts.append(f"آدرس: {record['address']}")
+        parts.append(f"Address / آدرس: {record['address']}")
     if record.get("working_hours"):
-        parts.append(f"ساعات کاری: {record['working_hours']}")
+        parts.append(f"Working hours / ساعات کاری: {record['working_hours']}")
     if record.get("phone"):
-        parts.append(f"تلفن: {record['phone']}")
+        parts.append(f"Phone / تلفن: {record['phone']}")
     if record.get("email"):
-        parts.append(f"ایمیل: {record['email']}")
+        parts.append(f"Email / ایمیل: {record['email']}")
     return "\n".join(parts) if parts else ""
 
 
 def build_faq_context_text(record: dict) -> str:
-    """Build context_text with prefix for FAQ (for embedding and LLM)."""
+    """Build context_text with bilingual labels so queries in any language match (embedding + LLM)."""
     parts = []
     if record.get("question"):
-        parts.append(f"سوال: {record['question']}")
+        parts.append(f"Question / سوال: {record['question']}")
     if record.get("answer"):
-        parts.append(f"پاسخ: {record['answer']}")
+        parts.append(f"Answer / پاسخ: {record['answer']}")
     if record.get("category"):
-        parts.append(f"دسته: {record['category']}")
+        parts.append(f"Category / دسته: {record['category']}")
     return "\n".join(parts) if parts else ""
 
 

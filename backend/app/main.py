@@ -62,11 +62,29 @@ def _ensure_user_email_columns():
 async def lifespan(app: FastAPI):
     import asyncio
     import logging
+    import shutil
+    from pathlib import Path
+
+    from app.config import VOICE_TEMP_DIR
     from app.ingestion.clip_embedder import get_embedder
+
     logger = logging.getLogger(__name__)
     Base.metadata.create_all(bind=engine)
     _ensure_products_column()
     _ensure_user_email_columns()
+
+    # Clear voice temp dir on startup (safety net for leftover files after crash/power loss)
+    if VOICE_TEMP_DIR.exists():
+        for p in VOICE_TEMP_DIR.iterdir():
+            try:
+                if p.is_file():
+                    p.unlink()
+                elif p.is_dir():
+                    shutil.rmtree(p, ignore_errors=True)
+            except OSError as e:
+                logger.warning("Could not remove %s: %s", p, e)
+    VOICE_TEMP_DIR.mkdir(parents=True, exist_ok=True)
+
     # Preload embedder at startup if possible; do not block startup on failure (e.g. network timeout to Hugging Face)
     try:
         loop = asyncio.get_event_loop()
@@ -76,6 +94,19 @@ async def lifespan(app: FastAPI):
             "Embedder preload failed (app will start; model will load on first use or fail then). Error: %s",
             e,
         )
+
+    # Preload Whisper (STT) so first voice-chat request doesn't timeout while model downloads
+    try:
+        from app.services.stt import get_whisper_model
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, get_whisper_model)
+        logger.info("Whisper model preloaded for voice chat")
+    except Exception as e:
+        logger.warning(
+            "Whisper preload failed (app will start; model will load on first voice use or fail then). Error: %s",
+            e,
+        )
+
     yield
     # shutdown if needed
 

@@ -1,7 +1,10 @@
 """Chat and sessions API. Chat endpoint accepts multipart/form-data and returns JSON response."""
 import asyncio
+import base64
 import json
+import uuid
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
@@ -10,6 +13,7 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
+from app.config import VOICE_TEMP_DIR
 from app.core.database import get_db, SessionLocal
 from app.models.user import User
 from app.models.session import ChatSession
@@ -20,7 +24,6 @@ from app.services.rag import (
     run_embed_and_search,
     enhanced_search_with_llm,
     filter_search_results_by_min_score,
-    build_context,
     build_combined_context,
     run_rag_response,
     is_product_related_query,
@@ -30,6 +33,8 @@ from app.services.rag import (
     search_store,
     search_faq,
 )
+from app.services.stt import transcribe_audio
+from app.services.tts import text_to_speech_to_bytes
 
 router = APIRouter()
 _executor = ThreadPoolExecutor(max_workers=4)
@@ -61,6 +66,93 @@ def _get_last_shown_products(db: Session, session_id: int) -> list[dict]:
             "product_id": p.get("product_id"),
         })
     return out
+
+
+async def _run_chat_response(
+    db: Session,
+    session_id: int,
+    effective_message: str,
+    image_bytes: bytes | None = None,
+    top_k: int | None = None,
+    price_max: float | None = None,
+    category: str | None = None,
+) -> tuple[str, list]:
+    """
+    Run RAG pipeline and save user/assistant messages. Returns (full_text, products).
+    Shared by POST /chat and POST /voice-chat.
+    """
+    loop = asyncio.get_event_loop()
+    user_text = None if effective_message == "(user sent an image)" else (effective_message or None)
+
+    do_product_search = is_product_related_query(user_text) or image_bytes is not None
+    if do_product_search:
+        if image_bytes:
+            search_results = await loop.run_in_executor(
+                _executor,
+                lambda: run_embed_and_search(
+                    user_text, image_bytes, top_k=top_k, price_max=price_max, category=category
+                ),
+            )
+        else:
+            last_shown = _get_last_shown_products(db, session_id)
+            enhanced = await loop.run_in_executor(
+                _executor,
+                lambda: enhanced_search_with_llm(
+                    user_query=user_text or "",
+                    limit=top_k or 10,
+                    price_max=price_max,
+                    category=category,
+                    last_shown_products=last_shown,
+                ),
+            )
+            search_results = enhanced["results"]
+        if not is_broad_products_query(user_text):
+            search_results = filter_search_results_by_min_score(search_results)
+        products = products_from_search_results(search_results)
+        query_vector = await loop.run_in_executor(
+            _executor,
+            lambda: get_query_vector(user_text, image_bytes),
+        )
+        store_results = await loop.run_in_executor(
+            _executor,
+            lambda: search_store(query_vector, top_k=3),
+        )
+        faq_results = await loop.run_in_executor(
+            _executor,
+            lambda: search_faq(query_vector, top_k=5),
+        )
+        context = build_combined_context(store_results, faq_results, search_results)
+    else:
+        context = "No relevant products found."
+        products = []
+
+    history = get_chat_history(db, session_id)
+    search_by_image = image_bytes is not None
+    full_text = await loop.run_in_executor(
+        _executor,
+        lambda: run_rag_response(context, history, effective_message, search_by_image=search_by_image),
+    )
+
+    db2 = SessionLocal()
+    try:
+        user_msg = Message(session_id=session_id, role="user", content=effective_message, image_url=None)
+        db2.add(user_msg)
+        assistant_msg = Message(
+            session_id=session_id,
+            role="assistant",
+            content=full_text,
+            products=json.dumps(products) if products else None,
+        )
+        db2.add(assistant_msg)
+        sess = db2.query(ChatSession).filter(ChatSession.id == session_id).first()
+        if sess and sess.title == "New Chat" and effective_message:
+            sess.title = effective_message[:100] + ("..." if len(effective_message) > 100 else "")
+        db2.commit()
+    finally:
+        db2.close()
+
+    return full_text, products
+
 
 # دامنه‌های مجاز برای پروکسی تصویر (جلوگیری از abuse)
 ALLOWED_IMAGE_HOSTS = {"ae01.alicdn.com", "alicdn.com", "cdn.shopify.com", "i.ebayimg.com"}
@@ -178,82 +270,78 @@ async def chat(
     if top_k is not None and (top_k < 1 or top_k > 100):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="top_k must be between 1 and 100")
 
-    loop = asyncio.get_event_loop()
-    user_text = message.strip() or None
     effective_message = message.strip() or "(user sent an image)"
+    full_text, products = await _run_chat_response(
+        db, session_id, effective_message,
+        image_bytes=image_bytes, top_k=top_k, price_max=price_max, category=category,
+    )
+    return {"message": full_text, "products": products}
 
-    # Determine if we need product search
-    do_product_search = is_product_related_query(user_text) or image_bytes is not None
-    if do_product_search:
-        if image_bytes:
-            # Image search: embed image and search (no LLM keyword extraction)
-            search_results = await loop.run_in_executor(
-                _executor,
-                lambda: run_embed_and_search(
-                    user_text, image_bytes, top_k=top_k, price_max=price_max, category=category
-                ),
-            )
-        else:
-            # Text query: use enhanced search (LLM extracts keywords/category, incl. Persian→English) for better accuracy
-            last_shown = _get_last_shown_products(db, session_id)
-            enhanced = await loop.run_in_executor(
-                _executor,
-                lambda: enhanced_search_with_llm(
-                    user_query=user_text or "",
-                    limit=top_k or 10,
-                    price_max=price_max,
-                    category=category,
-                    last_shown_products=last_shown,
-                ),
-            )
-            search_results = enhanced["results"]
-        # Only show products that meet minimum relevance (avoid showing irrelevant results from low-threshold fallback). Skip filter for "show all" queries.
-        if not is_broad_products_query(user_text):
-            search_results = filter_search_results_by_min_score(search_results)
-        products = products_from_search_results(search_results)
-        # Parallel search in store and FAQ (same query vector), then build combined context
-        query_vector = await loop.run_in_executor(
-            _executor,
-            lambda: get_query_vector(user_text, image_bytes),
-        )
-        store_results = await loop.run_in_executor(
-            _executor,
-            lambda: search_store(query_vector, top_k=3),
-        )
-        faq_results = await loop.run_in_executor(
-            _executor,
-            lambda: search_faq(query_vector, top_k=5),
-        )
-        context = build_combined_context(store_results, faq_results, search_results)
-    else:
-        context = "No relevant products found."
-        products = []
 
-    # Get chat history and generate response (non-streaming)
-    history = get_chat_history(db, session_id)
-    search_by_image = image_bytes is not None
-    full_text = await loop.run_in_executor(
-        _executor,
-        lambda: run_rag_response(context, history, effective_message, search_by_image=search_by_image),
+@router.post("/voice-chat")
+async def voice_chat(
+    session_id: int = Form(...),
+    voice: UploadFile = File(..., description="Audio file (e.g. webm, mp3, wav)"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Full voice conversation: STT -> RAG -> TTS. Returns JSON with message, products, and audio_base64.
+    On TTS failure, returns message and products without audio (graceful degradation).
+    """
+    session = db.query(ChatSession).filter(ChatSession.id == session_id, ChatSession.user_id == current_user.id).first()
+    if not session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    if not voice.filename:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="voice file required")
+
+    VOICE_TEMP_DIR.mkdir(parents=True, exist_ok=True)
+    suffix = Path(voice.filename).suffix or ".webm"
+    temp_path = VOICE_TEMP_DIR / f"{uuid.uuid4().hex}{suffix}"
+    try:
+        content = await voice.read()
+        temp_path.write_bytes(content)
+    except Exception as e:
+        if temp_path.exists():
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to save voice file") from e
+
+    try:
+        loop = asyncio.get_event_loop()
+        text = await loop.run_in_executor(_executor, lambda: transcribe_audio(str(temp_path)))
+    finally:
+        try:
+            if temp_path.exists():
+                temp_path.unlink()
+        except OSError:
+            pass
+
+    if not (text and text.strip()):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No speech detected. Please try again with a clearer recording.",
+        )
+
+    full_text, products = await _run_chat_response(
+        db, session_id, text.strip(), image_bytes=None,
     )
 
-    # Save user and assistant messages
-    db2 = SessionLocal()
+    audio_base64 = None
     try:
-        user_msg = Message(session_id=session_id, role="user", content=effective_message, image_url=None)
-        db2.add(user_msg)
-        assistant_msg = Message(
-            session_id=session_id,
-            role="assistant",
-            content=full_text,
-            products=json.dumps(products) if products else None,
-        )
-        db2.add(assistant_msg)
-        sess = db2.query(ChatSession).filter(ChatSession.id == session_id).first()
-        if sess and sess.title == "New Chat" and effective_message:
-            sess.title = effective_message[:100] + ("..." if len(effective_message) > 100 else "")
-        db2.commit()
-    finally:
-        db2.close()
+        audio_bytes = await text_to_speech_to_bytes(full_text)
+        if audio_bytes:
+            audio_base64 = base64.b64encode(audio_bytes).decode("ascii")
+    except Exception:
+        pass
 
-    return {"message": full_text, "products": products}
+    response = {
+        "message": full_text,
+        "products": products,
+        "transcribed_text": text.strip(),
+    }
+    if audio_base64 is not None:
+        response["audio_base64"] = audio_base64
+    return response

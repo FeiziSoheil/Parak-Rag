@@ -73,6 +73,8 @@ chromadb/
 *.sqlite
 *.sqlite3
 .cache/
+backend/temp/
+**/temp/voice/
 
 # Large/sensitive data files (uncomment if you don't commit them)
 # *.csv
