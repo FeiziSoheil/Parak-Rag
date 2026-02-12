@@ -15,8 +15,8 @@ const geistMono = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "RAG Chat - Intelligent Conversational AI",
-  description: "Modern AI-powered chat application with RAG capabilities for intelligent product search and recommendations",
+  title: "PARAK - Intelligent Assistant",
+  description: "PARAK (پَرَک) — یک دستیار هوشمند با قابلیت گفتگو و جستجوی هوشمند محصولات. Intelligent conversational assistant with RAG.",
 };
 
 export default function RootLayout({

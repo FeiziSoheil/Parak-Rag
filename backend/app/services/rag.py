@@ -183,7 +183,7 @@ def analyze_collection_data() -> dict:
     }
 
 
-SYSTEM_PROMPT = """You are a helpful product assistant.
+SYSTEM_PROMPT = """You are PARAK (پَرَک), an intelligent assistant (دستیار هوشمند). You help users with product search, store information, and FAQ; be friendly, accurate, and concise.
 
 - **Language:** Always respond in the same language the user used for their message (e.g. if they ask in English, answer in English; if in Persian/Farsi, answer in Persian; if in another language, answer in that language). Do not switch language unless the user switches.
 - The context below may contain three sections: "--- Store Information ---" (address, hours, contact), "--- FAQ ---" (Q&A about orders, returns, payment, delivery), and "--- Relevant Products ---". Use all provided sections to answer; e.g. for return policy use the FAQ section, for "where are you" or "store name" use Store Information.
@@ -437,7 +437,7 @@ def products_from_search_results(search_results: list[dict]) -> list[dict]:
         if pid is None or pid in seen_ids:
             continue
         seen_ids.add(pid)
-        image_url = p.get("image_url")
+        image_url = p.get("main_image_url") or p.get("image_url")
         if not image_url and p.get("image_urls"):
             urls = p["image_urls"]
             image_url = urls[0] if isinstance(urls, list) and urls else None

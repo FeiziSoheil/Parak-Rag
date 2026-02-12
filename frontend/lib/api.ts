@@ -258,6 +258,25 @@ export async function getSessionMessages(
   return res.json();
 }
 
+export type MessageSearchResult = {
+  message_id: number;
+  session_id: number;
+  session_title: string;
+  role: string;
+  content_snippet: string;
+  created_at: string;
+};
+
+export async function searchSessionMessages(q: string): Promise<MessageSearchResult[]> {
+  const token = getToken();
+  if (!token) throw new Error("Not authenticated");
+  const res = await fetch(`${API_BASE}/api/sessions/search?q=${encodeURIComponent(q.trim())}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error("Failed to search sessions");
+  return res.json();
+}
+
 export type RagSettings = {
   rag_top_k: number;
   rag_score_threshold: number;

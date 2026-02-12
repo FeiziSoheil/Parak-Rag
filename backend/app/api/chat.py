@@ -18,7 +18,7 @@ from app.core.database import get_db, SessionLocal
 from app.models.user import User
 from app.models.session import ChatSession
 from app.models.message import Message
-from app.schemas.chat import SessionResponse, MessageOut
+from app.schemas.chat import SessionResponse, MessageOut, MessageSearchResult
 from app.services.memory import get_chat_history
 from app.services.rag import (
     run_embed_and_search,
@@ -394,6 +394,36 @@ def get_session_messages(
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
     return session.messages
+
+
+@router.get("/sessions/search", response_model=list[MessageSearchResult])
+def search_sessions(
+    q: str = Query(..., min_length=1, description="Search query in message content"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Search messages across all sessions of the current user. Returns matching messages with session info."""
+    pattern = f"%{q.strip()}%"
+    rows = (
+        db.query(Message, ChatSession)
+        .join(ChatSession, Message.session_id == ChatSession.id)
+        .filter(ChatSession.user_id == current_user.id)
+        .filter(Message.content.ilike(pattern))
+        .order_by(Message.created_at.desc())
+        .limit(50)
+        .all()
+    )
+    return [
+        MessageSearchResult(
+            message_id=m.id,
+            session_id=m.session_id,
+            session_title=s.title or "New Chat",
+            role=m.role,
+            content_snippet=(m.content[:200] + "…" if len(m.content) > 200 else m.content),
+            created_at=m.created_at,
+        )
+        for m, s in rows
+    ]
 
 
 @router.post("/chat")

@@ -3,8 +3,11 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { AudioLines } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { ProductSummary } from "@/lib/api";
 import { float32ToWavFile } from "@/lib/audioUtils";
+import { playVoiceActivationSound } from "@/components/chat/VoiceActivationSound";
+import { playVoiceDeactivationSound } from "@/components/chat/VoiceDeactivationSound";
 
 export type MessageInputHandle = { focus: () => void };
 
@@ -165,7 +168,7 @@ const MessageInputInner = forwardRef<MessageInputHandle, Props>(function Message
   const [inputFocused, setInputFocused] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const vadRef = useRef<{ pause: () => void; start: () => void } | null>(null);
+  const vadRef = useRef<{ pause: () => void; start: () => void | Promise<void> } | null>(null);
   // Keep a ref to attached products so VAD callback can access current value
   const attachedProductsRef = useRef<ProductSummary[]>(attachedProducts);
   attachedProductsRef.current = attachedProducts;
@@ -231,20 +234,20 @@ const MessageInputInner = forwardRef<MessageInputHandle, Props>(function Message
             if (!sendingProp && !isAISpeaking) await vad.start();
           } catch (startErr) {
             console.error("VAD start failed:", startErr);
-            if (mounted) setVadError((startErr as Error)?.message ?? "میکروفون روشن نشد");
+            if (mounted) setVadError((startErr as Error)?.message ?? "Microphone could not start");
           }
         })
         .catch((err) => {
           console.error("VAD init failed:", err);
           if (mounted) {
-            setVadError(err?.message ?? "خطا در راه‌اندازی میکروفون");
+            setVadError(err?.message ?? "Microphone error");
             setVadLoading(false);
           }
         });
     }).catch((err) => {
       console.error("VAD import failed:", err);
       if (mounted) {
-        setVadError(err?.message ?? "خطا در بارگذاری تشخیص صدا");
+        setVadError(err?.message ?? "Voice detection load error");
         setVadLoading(false);
       }
     });
@@ -262,7 +265,8 @@ const MessageInputInner = forwardRef<MessageInputHandle, Props>(function Message
     if (!vad) return;
     if (isAISpeaking || sendingProp) vad.pause();
     else if (voiceModeActive) {
-      vad.start().catch((err: unknown) => console.error("VAD resume failed:", err));
+      const p = vad.start();
+      if (p instanceof Promise) p.catch((err: unknown) => console.error("VAD resume failed:", err));
     }
   }, [isAISpeaking, sendingProp, voiceModeActive]);
 
@@ -271,11 +275,13 @@ const MessageInputInner = forwardRef<MessageInputHandle, Props>(function Message
       if (isAISpeaking) onStopAIPlayback?.();
       vadRef.current?.pause();
       vadRef.current = null;
+      playVoiceDeactivationSound(); // Play descending sound when voice mode deactivates
       setVoiceModeActive(false);
       setUserSpeaking(false);
       setVadError(null);
     } else {
       if (!onSendVoice || disabled || sending) return;
+      playVoiceActivationSound(); // Play chime when voice mode activates
       setVoiceModeActive(true);
     }
   }, [voiceModeActive, isAISpeaking, onStopAIPlayback, onSendVoice, disabled, sending]);
@@ -297,6 +303,15 @@ const MessageInputInner = forwardRef<MessageInputHandle, Props>(function Message
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
+    if (e.key === "Escape") {
+      if (voiceModeActive) {
+        e.preventDefault();
+        setVoiceModeActive(false);
+        setUserSpeaking(false);
+        setVadError(null);
+      }
+      return;
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSubmit(e);
@@ -316,19 +331,32 @@ const MessageInputInner = forwardRef<MessageInputHandle, Props>(function Message
                 key={p.product_id}
                 className="flex items-center gap-2 rounded-lg border border-border bg-muted/50 px-2.5 py-1.5 text-sm"
               >
-                <span className="max-w-[140px] truncate text-foreground" title={p.subject}>
-                  {p.subject}
-                </span>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="max-w-[140px] truncate text-foreground cursor-default">
+                      {p.subject}
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">
+                    <p>{p.subject}</p>
+                  </TooltipContent>
+                </Tooltip>
                 {onRemoveProduct && (
-                  <button
-                    type="button"
-                    onClick={() => onRemoveProduct(p.product_id)}
-                    className="p-0.5 rounded text-muted-foreground hover:text-destructive transition-colors"
-                    title="Remove from attachment"
-                    aria-label="Remove from attachment"
-                  >
-                    <IconClose />
-                  </button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        onClick={() => onRemoveProduct(p.product_id)}
+                        className="p-0.5 rounded text-muted-foreground hover:text-destructive transition-colors"
+                        aria-label="Remove from attachment"
+                      >
+                        <IconClose />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">
+                      <p>Remove from attachment</p>
+                    </TooltipContent>
+                  </Tooltip>
                 )}
               </div>
             ))}
@@ -340,15 +368,21 @@ const MessageInputInner = forwardRef<MessageInputHandle, Props>(function Message
                     alt="Preview"
                     className="h-12 w-12 object-cover rounded-lg border border-border"
                   />
-                  <button
-                    type="button"
-                    onClick={() => setImageFile(null)}
-                    className="absolute -top-1 -right-1 p-1 rounded bg-card border border-border text-muted-foreground hover:text-destructive transition-colors"
-                    title="Remove image"
-                    aria-label="Remove image"
-                  >
-                    <IconClose />
-                  </button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        onClick={() => setImageFile(null)}
+                        className="absolute -top-1 -right-1 p-1 rounded bg-card border border-border text-muted-foreground hover:text-destructive transition-colors"
+                        aria-label="Remove image"
+                      >
+                        <IconClose />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">
+                      <p>Remove image</p>
+                    </TooltipContent>
+                  </Tooltip>
                 </div>
                 <span className="text-xs text-muted-foreground">{imageFile.name}</span>
               </>
@@ -363,16 +397,22 @@ const MessageInputInner = forwardRef<MessageInputHandle, Props>(function Message
           className="hidden"
           onChange={(e) => setImageFile(e.target.files?.[0] ?? null)}
         />
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={disabled || sending || voiceModeActive}
-          className="flex items-center justify-center w-8 h-8 shrink-0 text-muted-foreground hover:text-foreground rounded-lg transition-colors disabled:opacity-50 disabled:pointer-events-none ml-0.5"
-          title="Attach image"
-          aria-label="Attach image"
-        >
-          <IconImage />
-        </button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={disabled || sending || voiceModeActive}
+              className="flex items-center justify-center w-8 h-8 shrink-0 text-muted-foreground hover:text-foreground rounded-lg transition-colors disabled:opacity-50 disabled:pointer-events-none ml-0.5"
+              aria-label="Attach image"
+            >
+              <IconImage />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="top">
+            <p>Attach image</p>
+          </TooltipContent>
+        </Tooltip>
         <Textarea
           ref={textareaRef}
           value={text}
@@ -380,25 +420,31 @@ const MessageInputInner = forwardRef<MessageInputHandle, Props>(function Message
           onFocus={() => setInputFocused(true)}
           onBlur={() => setInputFocused(false)}
           onKeyDown={handleKeyDown}
-          placeholder="Message…"
+          placeholder="Message… (Click / to focus)"
           rows={1}
           className="!min-h-[22px] max-h-28 resize-none flex-1 rounded-none border-0 bg-transparent shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 py-1.5 px-2 text-sm placeholder:text-muted-foreground leading-tight"
           disabled={disabled || sending || voiceModeActive}
         />
         {showSendButton ? (
-          <button
-            type="submit"
-            disabled={!hasContent || sending || disabled || voiceModeActive}
-            className="flex items-center justify-center w-8 h-8 shrink-0 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:pointer-events-none mr-0.5"
-            title="Send"
-            aria-label="Send message"
-          >
-            {sending ? (
-              <IconLoader className="text-primary-foreground size-4" />
-            ) : (
-              <IconSend />
-            )}
-          </button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="submit"
+                disabled={!hasContent || sending || disabled || voiceModeActive}
+                className="flex items-center justify-center w-8 h-8 shrink-0 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:pointer-events-none mr-0.5"
+                aria-label="Send message"
+              >
+                {sending ? (
+                  <IconLoader className="text-primary-foreground size-4" />
+                ) : (
+                  <IconSend />
+                )}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              <p>Send</p>
+            </TooltipContent>
+          </Tooltip>
         ) : onSendVoice ? (
           (() => {
             const voiceState: VoiceUIState = !voiceModeActive
@@ -413,65 +459,77 @@ const MessageInputInner = forwardRef<MessageInputHandle, Props>(function Message
                       ? "userSpeaking"
                       : "listening";
             const micTitle = vadError
-              ? vadError + " (کلیک برای بستن)"
+              ? vadError + " (Click to dismiss)"
               : voiceState === "idle"
-                ? "روشن کردن حالت صوتی (ارسال خودکار بعد از صحبت)"
+                ? "Turn on voice mode"
                 : voiceState === "listening"
-                  ? (vadLoading ? "در حال راه‌اندازی میکروفون…" : "در حال گوش دادن… کلیک برای خاموش کردن")
+                  ? (vadLoading ? "Starting microphone…" : "Listening… Click to turn off")
                   : voiceState === "userSpeaking"
-                    ? "در حال صحبت… کلیک برای خاموش کردن"
+                    ? "Speaking… Click to turn off"
                     : voiceState === "processing"
-                      ? "در حال ارسال…"
-                      : "ربات در حال صحبت است. کلیک برای خاموش یا قطع";
+                      ? "Sending…"
+                      : "PARAK is speaking. Click to stop";
             return (
-              <button
-                type="button"
-                onClick={handleMicClick}
-                disabled={disabled || (sending && !voiceModeActive)}
-                className={`flex items-center justify-center w-8 h-8 shrink-0 rounded-xl transition-colors disabled:opacity-50 disabled:pointer-events-none mr-0.5 ${
-                  vadError
-                    ? "text-destructive bg-destructive/15 hover:bg-destructive/25"
-                    : voiceState === "idle"
-                      ? "text-muted-foreground hover:text-foreground"
-                      : voiceState === "listening"
-                        ? "text-destructive/80 bg-destructive/10 hover:bg-destructive/20"
-                        : voiceState === "userSpeaking"
-                          ? "text-destructive bg-destructive/20 hover:bg-destructive/30 animate-pulse"
-                          : voiceState === "processing"
-                            ? "text-muted-foreground bg-muted"
-                            : "text-green-600 dark:text-green-500 bg-green-500/15 hover:bg-green-500/25"
-                }`}
-                title={micTitle}
-                aria-label={micTitle}
-              >
-                {vadLoading ? (
-                  <IconLoader className="text-muted-foreground" />
-                ) : voiceState === "processing" ? (
-                  <IconLoader className="text-muted-foreground" />
-                ) : voiceState === "aiSpeaking" ? (
-                  <IconWaveform />
-                ) : voiceModeActive ? (
-                  <IconSquare />
-                ) : (
-                  <AudioLines className="size-4" />
-                )}
-              </button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={handleMicClick}
+                    disabled={disabled || (sending && !voiceModeActive)}
+                    className={`flex items-center justify-center w-8 h-8 shrink-0 rounded-xl transition-colors disabled:opacity-50 disabled:pointer-events-none mr-0.5 ${
+                      vadError
+                        ? "text-destructive bg-destructive/15 hover:bg-destructive/25"
+                        : voiceState === "idle"
+                          ? "text-muted-foreground hover:text-foreground"
+                          : voiceState === "listening"
+                            ? "text-destructive/80 bg-destructive/10 hover:bg-destructive/20"
+                            : voiceState === "userSpeaking"
+                              ? "text-destructive bg-destructive/20 hover:bg-destructive/30 animate-pulse"
+                              : voiceState === "processing"
+                                ? "text-muted-foreground bg-muted"
+                                : "text-green-600 dark:text-green-500 bg-green-500/15 hover:bg-green-500/25"
+                    }`}
+                    aria-label={micTitle}
+                  >
+                    {vadLoading ? (
+                      <IconLoader className="text-muted-foreground" />
+                    ) : voiceState === "processing" ? (
+                      <IconLoader className="text-muted-foreground" />
+                    ) : voiceState === "aiSpeaking" ? (
+                      <IconWaveform />
+                    ) : voiceModeActive ? (
+                      <IconSquare />
+                    ) : (
+                      <AudioLines className="size-4" />
+                    )}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="top">
+                  <p>{micTitle}</p>
+                </TooltipContent>
+              </Tooltip>
             );
           })()
         ) : (
-          <button
-            type="submit"
-            disabled={!hasContent || sending || disabled}
-            className="flex items-center justify-center w-8 h-8 shrink-0 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:pointer-events-none mr-0.5"
-            title="Send"
-            aria-label="Send message"
-          >
-            {sending ? (
-              <IconLoader className="text-primary-foreground size-4" />
-            ) : (
-              <IconSend />
-            )}
-          </button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="submit"
+                disabled={!hasContent || sending || disabled}
+                className="flex items-center justify-center w-8 h-8 shrink-0 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:pointer-events-none mr-0.5"
+                aria-label="Send message"
+              >
+                {sending ? (
+                  <IconLoader className="text-primary-foreground size-4" />
+                ) : (
+                  <IconSend />
+                )}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              <p>Send</p>
+            </TooltipContent>
+          </Tooltip>
         )}
       </div>
     </form>

@@ -14,7 +14,6 @@ import {
 } from "@/components/ui/tooltip";
 import { StreamingTypewriter } from "@/components/ui/typewriter-effect";
 import ShinyText from "@/components/ui/ShinyText";
-import { Loader } from "@/components/ui/loader";
 
 const LOADING_PHRASES = [
   "Finding products...",
@@ -35,6 +34,8 @@ export type MessageEntry = {
   attachedProducts?: ProductSummary[];
   /** Base64-encoded MP3 from voice-chat response (assistant messages only) */
   audioBase64?: string;
+  /** When true, user message is waiting for STT — show loader in bubble (user messages only) */
+  transcribing?: boolean;
   created_at?: string;
 };
 
@@ -142,8 +143,8 @@ function ProductCards({
               )}
             </div>
             <div className="p-3">
-              <p className="text-sm font-medium text-foreground line-clamp-2">
-                <ShinyText text={p.subject} speed={2} spread={120} direction="left" yoyo pauseOnHover className="line-clamp-2" />
+              <p className="text-sm font-medium text-foreground">
+                {p.subject}
               </p>
               <div className="flex items-center justify-between mt-1.5">
                 {p.price != null && (
@@ -364,9 +365,16 @@ export function MessageList({ messages, sending, expectsQdrantSearch = false, we
                       key={p.product_id}
                       className="inline-flex items-center gap-1.5 rounded-md bg-primary-foreground/15 px-2 py-1 text-xs"
                     >
-                      <span className="max-w-[160px] truncate" title={p.subject}>
-                        {p.subject}
-                      </span>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="max-w-[160px] truncate cursor-default">
+                            {p.subject}
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent side="top">
+                          <p>{p.subject}</p>
+                        </TooltipContent>
+                      </Tooltip>
                       {p.price != null && (
                         <span className="shrink-0 opacity-90">
                           ${typeof p.price === "number" ? p.price.toFixed(2) : p.price}
@@ -399,7 +407,21 @@ export function MessageList({ messages, sending, expectsQdrantSearch = false, we
                 </>
               ) : (
                 <>
-                  {m.content ? (
+                  {m.transcribing ? (
+                    <div className="py-1">
+                      <ShinyText
+                        text="Converting speech to text…"
+                        speed={1.2}
+                        spread={100}
+                        direction="left"
+                        yoyo
+                        pauseOnHover
+                        color="#717171"
+                        shineColor="#707070"
+                        className="text-sm"
+                      />
+                    </div>
+                  ) : m.content ? (
                     <p dir="auto" className="message-content text-sm whitespace-pre-wrap leading-relaxed">{m.content}</p>
                   ) : m.attachedProducts?.length ? (
                     <p className="text-sm text-primary-foreground/80 italic">Question about attached product(s)</p>
@@ -463,20 +485,18 @@ export function MessageList({ messages, sending, expectsQdrantSearch = false, we
         {sending && (
           <div className="flex flex-col items-start animate-fade-in">
             <div className="max-w-[85%] rounded-xl px-4 py-1 bg-muted text-foreground border border-border/50">
-              {expectsQdrantSearch ? (
-                <ShinyText
-                  text={LOADING_PHRASES[loadingPhraseIndex]}
-                  speed={2}
-                  delay={0}
-                  spread={120}
-                  direction="left"
-                  yoyo
-                  pauseOnHover
-                  className="text-sm"
-                />
-              ) : (
-                <Loader variant="dots-pulse" size="md" />
-              )}
+              <ShinyText
+                text={expectsQdrantSearch ? LOADING_PHRASES[loadingPhraseIndex] : "Thinking…"}
+                speed={1.2}
+                delay={0}
+                spread={100}
+                direction="left"
+                yoyo
+                pauseOnHover
+                color="var(--muted-foreground)"
+                shineColor="var(--foreground)"
+                className="text-sm"
+              />
             </div>
           </div>
         )}

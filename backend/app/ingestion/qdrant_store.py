@@ -92,6 +92,7 @@ def store_products(embedder, products: list[dict], collection: str = QDRANT_COLL
             "category_name": prod.get("category_name", ""),
             "type": "text",
             "image_urls": image_urls,
+            "main_image_url": prod.get("main_image_url") or (image_urls[0] if image_urls else ""),
             "variants": prod.get("variants") or [],
         }
         points.append(PointStruct(id=_point_id_text(pid), vector=vec, payload=payload))
@@ -115,6 +116,7 @@ def store_products(embedder, products: list[dict], collection: str = QDRANT_COLL
                 "category_name": prod.get("category_name", ""),
                 "type": "image",
                 "image_url": url,
+                "main_image_url": prod.get("main_image_url") or (image_urls[0] if image_urls else ""),
                 "variants": prod.get("variants") or [],
             }
             points_img = [PointStruct(id=_point_id_image(pid, idx), vector=vec, payload=payload)]

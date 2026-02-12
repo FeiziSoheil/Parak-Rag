@@ -53,3 +53,14 @@ class MessageOut(BaseModel):
             except Exception:
                 return None
         return v
+
+
+class MessageSearchResult(BaseModel):
+    """One message hit when searching across sessions."""
+
+    message_id: int
+    session_id: int
+    session_title: str
+    role: str
+    content_snippet: str
+    created_at: datetime

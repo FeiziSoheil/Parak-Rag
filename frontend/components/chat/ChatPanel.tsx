@@ -106,6 +106,27 @@ export function ChatPanel({ sessionId }: Props) {
     prevSending.current = sending;
   }, [sending]);
 
+  // Keyboard shortcuts: / → focus message input; Escape → stop AI voice
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const inInput =
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement ||
+        (e.target as HTMLElement)?.getAttribute?.("contenteditable") === "true";
+      if (e.key === "/" && !inInput) {
+        e.preventDefault();
+        messageInputRef.current?.focus();
+        return;
+      }
+      if (e.key === "Escape" && isAISpeaking) {
+        e.preventDefault();
+        stopAIPlayback();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isAISpeaking, stopAIPlayback]);
+
   useEffect(() => {
     if (!sessionId) {
       setMessages([]);
@@ -204,40 +225,53 @@ export function ChatPanel({ sessionId }: Props) {
     // Use attached products from parameter or current selection
     const productsToAttach = attachedProducts ?? selectedProducts;
     
-    // First: transcribe and detect intent (to show appropriate loader)
+    // Show user message with STT loader immediately
+    const pendingUserMsgId = nextTempIdRef.current--;
     setSending(true);
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: pendingUserMsgId,
+        role: "user",
+        content: "",
+        image_url: null,
+        attachedProducts: productsToAttach.length > 0 ? productsToAttach : undefined,
+        transcribing: true,
+      },
+    ]);
+    
+    // STT + intent detection
     let transcribedText = "";
     try {
       const intentResult = await voiceDetectIntent(voiceFile);
       transcribedText = intentResult.transcribed_text || "";
-      // If products are attached, always expect Qdrant search (user is asking about specific products)
       setExpectsQdrantSearch(productsToAttach.length > 0 || intentResult.needs_qdrant_search);
     } catch {
-      // Fallback: assume search needed if detection fails
       setExpectsQdrantSearch(true);
     }
+    
+    // Replace loader with transcribed content in the same user message
+    const userContent = transcribedText.trim() || "Voice message";
+    setMessages((prev) =>
+      prev.map((msg) =>
+        msg.id === pendingUserMsgId
+          ? { ...msg, content: userContent, transcribing: false }
+          : msg
+      )
+    );
     
     // Clear selected products after capturing them
     if (productsToAttach.length > 0) setSelectedProducts([]);
     
     // Then: send voice chat for full response (with selected products)
     try {
-      const { message: responseText, products, audio_base64, transcribed_text } = await sendVoiceChat(
+      const { message: responseText, products, audio_base64 } = await sendVoiceChat(
         sessionId,
         voiceFile,
         productsToAttach.length > 0 ? productsToAttach : undefined
       );
-      const userContent = (transcribed_text && transcribed_text.trim()) ? transcribed_text.trim() : (transcribedText || "Voice message");
       setMessages((prev) => [
         ...prev,
-        {
-          id: nextTempIdRef.current--,
-          role: "user",
-          content: userContent,
-          image_url: null,
-          // Show attached products in user message bubble
-          attachedProducts: productsToAttach.length > 0 ? productsToAttach : undefined,
-        },
         {
           id: nextTempIdRef.current--,
           role: "assistant",

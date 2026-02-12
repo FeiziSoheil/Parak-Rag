@@ -1,5 +1,6 @@
 """Load product JSONs from data/AE_Data and extract normalized product records."""
 import json
+import random
 import re
 from pathlib import Path
 from typing import Any
@@ -143,6 +144,7 @@ def extract_one_product(item: dict) -> dict | None:
         main_pic = product_node.get("itemMainPic")
         if main_pic and isinstance(main_pic, str) and main_pic.strip():
             image_urls = [main_pic.strip()]
+    main_image_url = image_urls[0] if image_urls else ""
     return {
         "product_id": product_id,
         "subject": subject,
@@ -151,12 +153,18 @@ def extract_one_product(item: dict) -> dict | None:
         "category_id": category_id,
         "category_name": category_name or "",
         "image_urls": image_urls,
+        "main_image_url": main_image_url,
         "variants": variants,
     }
 
 
-def load_all_products(data_dir: str) -> list[dict]:
-    """Load all JSON files from data_dir and return list of extracted products (idempotent-ready: product_id per record)."""
+def load_all_products(data_dir: str, shuffle: bool = True) -> list[dict]:
+    """Load all JSON files from data_dir and return list of extracted products (idempotent-ready: product_id per record).
+    
+    Args:
+        data_dir: Path to directory containing JSON files.
+        shuffle: If True (default), shuffle products for category diversity when limit is applied.
+    """
     path = Path(data_dir)
     if not path.is_dir():
         return []
@@ -176,4 +184,7 @@ def load_all_products(data_dir: str) -> list[dict]:
             if prod and prod["product_id"] not in seen_ids:
                 seen_ids.add(prod["product_id"])
                 products.append(prod)
+    # Shuffle for category diversity when limit is applied
+    if shuffle:
+        random.shuffle(products)
     return products
