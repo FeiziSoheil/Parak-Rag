@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { TrendingUp, Search, ShoppingCart, CreditCard } from "lucide-react";
 import { MessageList, type MessageEntry, type SuggestedPromptItem } from "./MessageList";
 import { MessageInput, type MessageInputHandle } from "./MessageInput";
+import { ProductSidebar } from "./ProductSidebar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getCurrentUser, getSessionMessages, sendChat, sendVoiceChat, detectIntent, voiceDetectIntent, type ProductSummary, type UserProfile } from "@/lib/api";
 
@@ -23,6 +24,10 @@ const SUGGESTED_PROMPTS: SuggestedPromptItem[] = [
   { text: "What are the payment methods?", icon: CreditCard },
 ];
 
+const SIDEBAR_WIDTH_MIN = 280;
+const SIDEBAR_WIDTH_MAX = 600;
+const SIDEBAR_WIDTH_DEFAULT = 320;
+
 type Props = {
   sessionId: number | null;
 };
@@ -41,6 +46,16 @@ function formatProductContext(products: ProductSummary[]): string {
 export function ChatPanel({ sessionId }: Props) {
   const [messages, setMessages] = useState<MessageEntry[]>([]);
   const [selectedProducts, setSelectedProducts] = useState<ProductSummary[]>([]);
+  /** Product currently shown in the right sidebar (last selected for view). */
+  const [sidebarProduct, setSidebarProduct] = useState<ProductSummary | null>(null);
+  /** During close we keep rendering the sidebar until width transition finishes. */
+  const [closingProduct, setClosingProduct] = useState<ProductSummary | null>(null);
+  /** Drives width transition; stays true while closing so width animates to 0 before unmount. */
+  const [sidebarWidthOpen, setSidebarWidthOpen] = useState(false);
+  /** Sidebar width in px (when open). Clamped between SIDEBAR_WIDTH_MIN and SIDEBAR_WIDTH_MAX. */
+  const [sidebarWidthPx, setSidebarWidthPx] = useState(SIDEBAR_WIDTH_DEFAULT);
+  const [isResizing, setIsResizing] = useState(false);
+  const resizeStartRef = useRef({ x: 0, width: 0 });
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
   /** True when current request triggers Qdrant search (product/FAQ/store). Show ShinyText only then. */
@@ -161,13 +176,56 @@ export function ChatPanel({ sessionId }: Props) {
   function toggleProductSelection(product: ProductSummary) {
     setSelectedProducts((prev) => {
       const exists = prev.some((p) => p.product_id === product.product_id);
-      if (exists) return prev.filter((p) => p.product_id !== product.product_id);
+      if (exists) {
+        if (sidebarProduct?.product_id === product.product_id) startCloseSidebar();
+        else setSidebarProduct((current) => (current?.product_id === product.product_id ? null : current));
+        return prev.filter((p) => p.product_id !== product.product_id);
+      }
+      setSidebarProduct(product);
+      setSidebarWidthOpen(true);
       return [...prev, product];
     });
   }
 
+  function startCloseSidebar() {
+    if (sidebarProduct) {
+      setClosingProduct(sidebarProduct);
+      setSidebarProduct(null);
+      setSidebarWidthOpen(false);
+      setTimeout(() => setClosingProduct(null), 300);
+    }
+  }
+
+  // Resize sidebar by dragging the left edge
+  useEffect(() => {
+    if (!isResizing) return;
+    const onMove = (e: MouseEvent) => {
+      const dx = e.clientX - resizeStartRef.current.x;
+      const next = Math.min(SIDEBAR_WIDTH_MAX, Math.max(SIDEBAR_WIDTH_MIN, resizeStartRef.current.width - dx));
+      setSidebarWidthPx(next);
+    };
+    const onUp = () => {
+      setIsResizing(false);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    return () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+  }, [isResizing]);
+
   function removeSelectedProduct(productId: number) {
     setSelectedProducts((prev) => prev.filter((p) => p.product_id !== productId));
+    if (sidebarProduct?.product_id === productId) {
+      startCloseSidebar();
+    } else {
+      setSidebarProduct((current) => (current?.product_id === productId ? null : current));
+    }
   }
 
   async function handleSend(message: string, imageFile: File | null, attachedProducts?: ProductSummary[]) {
@@ -331,52 +389,54 @@ export function ChatPanel({ sessionId }: Props) {
   }
 
   return (
-    <div className="flex flex-col h-full flex-1 min-w-0">
-      <div className="flex-1 min-h-0 flex flex-col w-full max-w-4xl mx-auto px-6 sm:px-8">
-        <div className="flex-1 min-h-0 flex flex-col">
-          {loading ? (
-            <div className="flex-1 flex flex-col gap-6 py-6">
-              <div className="flex gap-3 max-w-[85%]">
-                <Skeleton className="h-8 w-8 shrink-0 rounded-full" />
-                <div className="space-y-2 flex-1">
-                  <Skeleton className="h-4 w-3/4" />
-                  <Skeleton className="h-4 w-1/2" />
+    <div className="flex flex-row h-full flex-1 min-w-0">
+      <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+        <div className="flex-1 min-h-0 flex flex-col w-full max-w-4xl mx-auto px-6 sm:px-8">
+          <div className="flex-1 min-h-0 flex flex-col">
+            {loading ? (
+              <div className="flex-1 flex flex-col gap-6 py-6">
+                <div className="flex gap-3 max-w-[85%]">
+                  <Skeleton className="h-8 w-8 shrink-0 rounded-full" />
+                  <div className="space-y-2 flex-1">
+                    <Skeleton className="h-4 w-3/4" />
+                    <Skeleton className="h-4 w-1/2" />
+                  </div>
+                </div>
+                <div className="flex gap-3 max-w-[85%] ml-auto flex-row-reverse">
+                  <Skeleton className="h-8 w-8 shrink-0 rounded-full" />
+                  <div className="space-y-2 flex-1">
+                    <Skeleton className="h-4 w-2/3 ml-auto" />
+                    <Skeleton className="h-4 w-1/3 ml-auto" />
+                  </div>
+                </div>
+                <div className="flex gap-3 max-w-[85%]">
+                  <Skeleton className="h-8 w-8 shrink-0 rounded-full" />
+                  <div className="space-y-2 flex-1">
+                    <Skeleton className="h-4 w-full" />
+                    <Skeleton className="h-4 w-4/5" />
+                    <Skeleton className="h-4 w-1/2" />
+                  </div>
                 </div>
               </div>
-              <div className="flex gap-3 max-w-[85%] ml-auto flex-row-reverse">
-                <Skeleton className="h-8 w-8 shrink-0 rounded-full" />
-                <div className="space-y-2 flex-1">
-                  <Skeleton className="h-4 w-2/3 ml-auto" />
-                  <Skeleton className="h-4 w-1/3 ml-auto" />
-                </div>
-              </div>
-              <div className="flex gap-3 max-w-[85%]">
-                <Skeleton className="h-8 w-8 shrink-0 rounded-full" />
-                <div className="space-y-2 flex-1">
-                  <Skeleton className="h-4 w-full" />
-                  <Skeleton className="h-4 w-4/5" />
-                  <Skeleton className="h-4 w-1/2" />
-                </div>
-              </div>
-            </div>
-          ) : (
-            <MessageList
-              messages={messages}
-              sending={sending}
-              expectsQdrantSearch={expectsQdrantSearch}
-              welcomeMessage={newChatWelcome}
-              suggestedPrompts={messages.length === 0 ? SUGGESTED_PROMPTS : undefined}
-              onSuggestedPromptClick={(text) => void handleSend(text, null)}
-              onRegenerate={handleRegenerate}
-              selectedProductIds={new Set(selectedProducts.map((p) => p.product_id))}
-              onProductSelect={toggleProductSelection}
-              voiceAudioRef={voiceAudioRef}
-              onAudioPlayStart={handleAudioPlayStart}
-              onAudioPlayEnd={handleAudioPlayEnd}
-            />
-          )}
+            ) : (
+              <MessageList
+                messages={messages}
+                sending={sending}
+                expectsQdrantSearch={expectsQdrantSearch}
+                welcomeMessage={newChatWelcome}
+                suggestedPrompts={messages.length === 0 ? SUGGESTED_PROMPTS : undefined}
+                onSuggestedPromptClick={(text) => void handleSend(text, null)}
+                onRegenerate={handleRegenerate}
+                selectedProductIds={new Set(selectedProducts.map((p) => p.product_id))}
+                onProductSelect={toggleProductSelection}
+                voiceAudioRef={voiceAudioRef}
+                onAudioPlayStart={handleAudioPlayStart}
+                onAudioPlayEnd={handleAudioPlayEnd}
+              />
+            )}
+          </div>
         </div>
-        <div className="shrink-0">
+        <div className="shrink-0 w-full max-w-4xl mx-auto px-6 sm:px-8">
           <MessageInput
             ref={messageInputRef}
             disabled={loading}
@@ -389,6 +449,31 @@ export function ChatPanel({ sessionId }: Props) {
             onStopAIPlayback={stopAIPlayback}
           />
         </div>
+      </div>
+      <div
+        className={`flex shrink-0 h-full overflow-hidden ${isResizing ? "" : "transition-[width] duration-300 ease-in-out"}`}
+        style={{ width: sidebarWidthOpen ? sidebarWidthPx : 0 }}
+      >
+        {(sidebarProduct || closingProduct) && (
+          <>
+            <div
+              role="separator"
+              aria-label="Resize sidebar"
+              className="w-1.5 shrink-0 cursor-col-resize border-l border-border bg-border/50 hover:bg-primary/20 active:bg-primary/30 transition-colors"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                resizeStartRef.current = { x: e.clientX, width: sidebarWidthPx };
+                setIsResizing(true);
+              }}
+            />
+            <div className="flex-1 min-w-0 overflow-hidden">
+              <ProductSidebar
+                product={sidebarProduct ?? closingProduct!}
+                onClose={startCloseSidebar}
+              />
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

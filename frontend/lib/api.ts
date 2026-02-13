@@ -220,10 +220,19 @@ export async function deleteSession(sessionId: number): Promise<void> {
   if (!res.ok) throw new Error("Failed to delete session");
 }
 
+export type ProductVariantAttribute = {
+  name?: string;
+  value?: string;
+};
+
 export type ProductVariant = {
   name?: string;
   color?: string;
   price?: number | null;
+  /** Variant image URL (e.g. color/size specific). */
+  image?: string | null;
+  /** Attributes from backend (e.g. Color: Red, Size: M). Each has name + value. */
+  attributes?: ProductVariantAttribute[];
 };
 
 export type ProductSummary = {

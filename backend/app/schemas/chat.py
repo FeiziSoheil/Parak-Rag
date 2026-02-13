@@ -22,12 +22,24 @@ class MessageIn(BaseModel):
     # image handled via multipart
 
 
+class ProductVariantAttribute(BaseModel):
+    name: str | None = None
+    value: str | None = None
+
+
+class ProductVariant(BaseModel):
+    image: str | None = None
+    price: float | None = None
+    attributes: list[ProductVariantAttribute] | None = None
+
+
 class ProductSummary(BaseModel):
     product_id: int
     subject: str
     price: float | None
     image_url: str | None = None
     category_name: str = ""
+    variants: list[ProductVariant] | None = None
 
 
 class MessageOut(BaseModel):
