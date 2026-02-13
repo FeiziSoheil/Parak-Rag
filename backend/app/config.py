@@ -24,6 +24,10 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-4o")  # use gpt-oss-120b when available
 
+# Proxy for image download (ingestion) — اگر با VPN/پراکسی به اینترنت وصل می‌شوید، این آدرس را تنظیم کنید
+# مثال: http://127.0.0.1:10808 برای Psiphon یا V2Ray وقتی Local mixed روی 10808 است
+IMAGE_FETCH_PROXY = os.getenv("IMAGE_FETCH_PROXY", "").strip() or None
+
 # Qdrant
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
 QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "products")

@@ -48,7 +48,17 @@ def ensure_collection(client: QdrantClient, collection: str = QDRANT_COLLECTION)
     If collection exists but vector size differs (e.g. embedder changed), delete and recreate it.
     """
     expected_size = get_embedding_dim()
-    collections = client.get_collections().collections
+    try:
+        collections = client.get_collections().collections
+    except Exception as e:
+        _log.error(
+            "اتصال به Qdrant ناموفق (آدرس: %s). احتمالاً سرور Qdrant خاموش است یا پروکسی درخواست را قطع می‌کند. NO_PROXY=localhost,127.0.0.1 را امتحان کنید. خطا: %s",
+            QDRANT_URL,
+            e,
+        )
+        raise RuntimeError(
+            f"اتصال به Qdrant برقرار نشد ({QDRANT_URL}). مطمئن شوید Qdrant در حال اجرا است و در صورت استفاده از پروکسی، NO_PROXY=localhost,127.0.0.1 تنظیم شده باشد."
+        ) from e
     exists = any(c.name == collection for c in collections)
     if exists:
         current_size = _collection_vector_size(client, collection)
@@ -107,6 +117,7 @@ def store_products(embedder, products: list[dict], collection: str = QDRANT_COLL
                 _log.warning("Image embed skipped for product_id=%s url=%s: %s", prod.get("product_id"), url[:80] if url else "", e)
                 continue
             pid = prod["product_id"]
+            main_url = prod.get("main_image_url") or (image_urls[0] if image_urls else "")
             payload = {
                 "product_id": pid,
                 "context_text": prod["context_text"],
@@ -116,7 +127,8 @@ def store_products(embedder, products: list[dict], collection: str = QDRANT_COLL
                 "category_name": prod.get("category_name", ""),
                 "type": "image",
                 "image_url": url,
-                "main_image_url": prod.get("main_image_url") or (image_urls[0] if image_urls else ""),
+                # main_image_url only when different from image_url (avoid duplicate URL in payload)
+                "main_image_url": main_url if main_url != url else "",
                 "variants": prod.get("variants") or [],
             }
             points_img = [PointStruct(id=_point_id_image(pid, idx), vector=vec, payload=payload)]

@@ -695,6 +695,170 @@ def run_embed_and_search(
     )
 
 
+def _compute_keyword_relevance(payload: dict, keywords: list[str]) -> tuple[float, bool]:
+    """Compute relevance score based on keyword matches in product data.
+    
+    Checks multiple fields: subject, category_name, context_text
+    Returns a tuple of (relevance_score, has_primary_match).
+    - relevance_score: 0 to ~2 (can exceed 1 with bonuses)
+    - has_primary_match: True if at least one of the top 3 keywords matched in subject
+    """
+    if not payload or not keywords:
+        return 0.0, False
+    
+    # Gather all searchable text from product
+    subject = (payload.get("subject") or "").lower()
+    category = (payload.get("category_name") or "").lower()
+    context = (payload.get("context_text") or "").lower()
+    
+    matches = 0.0
+    total_weight = 0.0
+    has_primary_match = False
+    
+    for i, kw in enumerate(keywords):
+        kw_lower = kw.lower().strip()
+        if not kw_lower:
+            continue
+        
+        # Earlier keywords are more important (harmonic weight)
+        weight = 1.0 / (i + 1)
+        total_weight += weight
+        
+        # Check for match in subject (most important)
+        if kw_lower in subject:
+            matches += weight * 1.5  # Strong bonus for subject match
+            
+            # Track if primary keywords (top 3) match in subject
+            if i < 3:
+                has_primary_match = True
+            
+            # Extra bonus for exact word match in subject
+            subject_words = subject.split()
+            if kw_lower in subject_words:
+                matches += weight * 0.5
+        
+        # Check for match in category
+        elif kw_lower in category:
+            matches += weight * 0.8
+            if i < 3:
+                has_primary_match = True
+        
+        # Check for match in context (weaker signal)
+        elif kw_lower in context:
+            matches += weight * 0.3
+    
+    relevance = matches / total_weight if total_weight > 0 else 0.0
+    return relevance, has_primary_match
+
+
+def _rerank_results(
+    results: list[dict],
+    primary_keywords: list[str],
+    boost_weight: float = 0.5,
+    require_keyword_match: bool = False,
+) -> list[dict]:
+    """Re-rank search results by combining semantic score with keyword relevance.
+    
+    Args:
+        results: List of search results with 'payload' and 'score' keys
+        primary_keywords: Keywords to look for in products (ordered by importance)
+        boost_weight: How much to weight keyword matching (0-1). Higher = more keyword influence.
+        require_keyword_match: If True, filter out results that don't match any primary keyword
+    
+    Returns:
+        Re-ranked list of results with updated scores
+    """
+    if not results:
+        return results
+    
+    if not primary_keywords:
+        # No keywords to boost, just return sorted by original score
+        return sorted(results, key=lambda x: x.get("score", 0), reverse=True)
+    
+    scored_results = []
+    for r in results:
+        payload = r.get("payload") or {}
+        original_score = r.get("score") or 0.0
+        
+        # Compute keyword relevance
+        keyword_relevance, has_primary_match = _compute_keyword_relevance(payload, primary_keywords)
+        
+        # Skip results without primary keyword match if required
+        if require_keyword_match and not has_primary_match:
+            continue
+        
+        # Combined score formula:
+        # final = original * (1 + relevance * boost_weight)
+        # This preserves semantic ordering while boosting keyword matches
+        final_score = original_score * (1 + keyword_relevance * boost_weight)
+        
+        # Additional boost for items with primary keyword match
+        if has_primary_match:
+            final_score *= 1.2
+        
+        scored_results.append({
+            **r,
+            "original_score": original_score,
+            "keyword_relevance": keyword_relevance,
+            "has_primary_match": has_primary_match,
+            "score": final_score,
+        })
+    
+    # Sort by final score descending
+    scored_results.sort(key=lambda x: x.get("score", 0), reverse=True)
+    return scored_results
+
+
+def _multi_query_search(
+    queries: list[str],
+    top_k_per_query: int = 10,
+    price_max: float | None = None,
+    category: str | None = None,
+) -> list[dict]:
+    """Execute multiple search queries and merge results.
+    
+    For complex queries like "gift for mother", we search for multiple product types
+    (perfume, jewelry, watch, etc.) and merge the results.
+    
+    Args:
+        queries: List of search query strings
+        top_k_per_query: Number of results per query
+        price_max: Optional price filter
+        category: Optional category filter
+    
+    Returns:
+        Merged and deduplicated results
+    """
+    if not queries:
+        return []
+    
+    all_results: list[dict] = []
+    seen_product_ids: set = set()
+    
+    for query in queries:
+        results = run_embed_and_search(
+            query, None,
+            top_k=top_k_per_query,
+            price_max=price_max,
+            category=category,
+        )
+        
+        for r in results:
+            payload = r.get("payload") or {}
+            pid = payload.get("product_id")
+            
+            # Deduplicate by product_id
+            if pid is not None and pid in seen_product_ids:
+                continue
+            
+            if pid is not None:
+                seen_product_ids.add(pid)
+            
+            all_results.append(r)
+    
+    return all_results
+
+
 def enhanced_search_with_llm(
     user_query: str,
     limit: int = 10,
@@ -702,7 +866,17 @@ def enhanced_search_with_llm(
     category: str | None = None,
     last_shown_products: list[dict] | None = None,
 ) -> dict:
-    """Use LLM to extract search intent (keywords, need_ideas, suggested_keywords, negative_constraints, etc.) then search; fallbacks if no results. Returns { query, results, summary, filters_applied }."""
+    """
+    Intelligent product search using LLM for query understanding and multi-strategy search.
+    
+    This function:
+    1. Uses LLM to understand user intent and extract search parameters
+    2. For simple queries: single semantic search with keyword re-ranking
+    3. For complex queries (gifts, ideas): multi-query search across product categories
+    4. Re-ranks all results based on keyword relevance
+    
+    Returns: { query, results, summary, filters_applied }
+    """
     if not OPENROUTER_API_KEY:
         results = run_embed_and_search(user_query, None, top_k=limit, price_max=price_max, category=category)
         return {
@@ -711,11 +885,12 @@ def enhanced_search_with_llm(
             "summary": None,
             "filters_applied": {"price_max": price_max, "category": category},
         }
+    
     analysis = analyze_collection_data()
     available_categories = (analysis.get("categories") or [])[:30]
     categories_context = ", ".join(available_categories) if available_categories else "No categories available"
 
-    # Build minimal context for "last shown products" (title + id only, same order as frontend)
+    # Build minimal context for "last shown products"
     last_products_block = ""
     if last_shown_products:
         lines = []
@@ -728,62 +903,90 @@ def enhanced_search_with_llm(
             + "\n".join(lines)
         )
 
-    prompt = f"""Analyze this product search query and respond with a single JSON object. Use only the schema below.
+    # Enhanced prompt with multi-query support
+    prompt = f"""Analyze this product search query and respond with a single JSON object.
 
 **Schema (all fields required; use null or empty array where not applicable):**
-- keywords: string (English search terms matching the catalog; if user wants ideas for an occasion/relation, still add base terms)
-- price_max: number | null (max price filter only if user explicitly mentions price)
-- category: string | null (MUST be one of the available categories below, or null)
-- relation_or_occasion: string | null (e.g. "spouse birthday", "Mother's Day", "boss", "housewarming")
-- interests: string | null (e.g. "tech gadgets", "coffee", "gaming", "outdoor")
-- negative_constraints: array of strings (things user does NOT want, e.g. ["toys"], ["kitchen items"], ["clothes"])
-- need_ideas: boolean (true if user asks for suggestions / "what to get" / "don't know what to buy" for an occasion/relation)
-- suggested_keywords: string | null (when need_ideas is true, provide concrete product-type keywords in English for that occasion/relation, e.g. "jewelry perfume smartwatch romantic" for spouse gift; otherwise null)
+- query_type: string ("direct" for specific product search, "exploratory" for gift/idea/recommendation queries)
+- search_queries: array of strings (English search queries to execute. For direct queries, use 1-2 queries. For exploratory queries like gifts, use 3-5 specific product type queries like ["perfume fragrance", "jewelry necklace bracelet", "watch smartwatch", "skincare beauty"])
+- primary_keywords: array of strings (keywords that should appear in relevant product titles, ordered by importance)
+- price_max: number | null (only if user explicitly mentions price)
+- category: string | null (one of the available categories, or null)
+- negative_constraints: array of strings (things user does NOT want)
 
-Available categories (use exactly as written or null): {categories_context}
+Available categories: {categories_context}
 {last_products_block}
 
 **Examples:**
 
-Example 1 – Direct query:
-Query: "گوشی آیفون"
-Response: {{"keywords": "iphone smartphone", "price_max": null, "category": null, "relation_or_occasion": null, "interests": null, "negative_constraints": [], "need_ideas": false, "suggested_keywords": null}}
+Example 1 – Direct product query:
+Query: "قاب گوشی"
+Response: {{"query_type": "direct", "search_queries": ["phone case cover protective"], "primary_keywords": ["case", "cover", "phone case", "protective"], "price_max": null, "category": null, "negative_constraints": []}}
 
-Example 2 – Needs ideas:
-Query: "کادو تولد همسر چی بگیرم"
-Response: {{"keywords": "gift birthday spouse", "price_max": null, "category": null, "relation_or_occasion": "spouse birthday", "interests": null, "negative_constraints": [], "need_ideas": true, "suggested_keywords": "jewelry perfume smartwatch romantic gift"}}
+Example 2 – Direct product query:
+Query: "هدفون بلوتوث"
+Response: {{"query_type": "direct", "search_queries": ["bluetooth headphone wireless earphone"], "primary_keywords": ["headphone", "earphone", "headset", "earbuds", "bluetooth", "wireless"], "price_max": null, "category": null, "negative_constraints": []}}
 
-Example 3 – With negative constraint:
+Example 3 – Gift for mother (exploratory):
+Query: "کادو برای مادر" or "هدیه روز مادر"
+Response: {{"query_type": "exploratory", "search_queries": ["perfume fragrance women scent", "jewelry necklace bracelet ring", "skincare beauty cream serum", "watch women elegant", "scarf shawl fashion"], "primary_keywords": ["perfume", "fragrance", "jewelry", "necklace", "skincare", "beauty", "watch", "scarf", "gift", "women"], "price_max": null, "category": null, "negative_constraints": []}}
+
+Example 4 – Gift for spouse birthday:
+Query: "کادو تولد همسر"
+Response: {{"query_type": "exploratory", "search_queries": ["perfume cologne fragrance", "jewelry ring necklace", "watch smartwatch elegant", "wallet leather accessories"], "primary_keywords": ["perfume", "jewelry", "watch", "wallet", "gift", "romantic"], "price_max": null, "category": null, "negative_constraints": []}}
+
+Example 5 – Gift for child (no toys):
 Query: "کادو برای بچه ولی اسباب بازی نباشه"
-Response: {{"keywords": "gift kids children", "price_max": null, "category": null, "relation_or_occasion": null, "interests": null, "negative_constraints": ["toys"], "need_ideas": true, "suggested_keywords": "books educational clothes shoes"}}
+Response: {{"query_type": "exploratory", "search_queries": ["children books educational", "kids clothes fashion", "school supplies stationery", "children shoes sneakers"], "primary_keywords": ["kids", "children", "educational", "books", "clothes", "school"], "price_max": null, "category": null, "negative_constraints": ["toys", "toy", "game"]}}
+
+Example 6 – Teacher's day gift:
+Query: "هدیه روز معلم"
+Response: {{"query_type": "exploratory", "search_queries": ["pen set elegant writing", "notebook journal planner", "desk organizer office", "mug cup gift"], "primary_keywords": ["pen", "notebook", "planner", "desk", "office", "gift", "elegant"], "price_max": null, "category": null, "negative_constraints": []}}
 
 Query: "{user_query}"
 
 Respond with JSON only, no other text."""
 
-    search_text = user_query
+    # Default values
+    search_queries: list[str] = [user_query]
+    primary_keywords: list[str] = []
     negative_constraints: list[str] = []
+    query_type = "direct"
+    
     try:
         llm = get_llm()
         response = llm.invoke([HumanMessage(content=prompt)])
         content = (response.content or "").strip()
         json_str = _extract_first_json_object(content)
+        
         if json_str:
             parsed = json.loads(json_str)
-            base_keywords = (parsed.get("keywords") or "").strip() or user_query
-            need_ideas = parsed.get("need_ideas") is True
-            suggested = (parsed.get("suggested_keywords") or "").strip()
-            if need_ideas and suggested:
-                search_text = suggested
-            else:
-                search_text = base_keywords
+            
+            # Extract query type
+            query_type = parsed.get("query_type", "direct")
+            
+            # Extract search queries
+            raw_queries = parsed.get("search_queries")
+            if isinstance(raw_queries, list) and raw_queries:
+                search_queries = [str(q).strip() for q in raw_queries if q and str(q).strip()]
+            
+            # Extract primary keywords
+            raw_primary = parsed.get("primary_keywords")
+            if isinstance(raw_primary, list):
+                primary_keywords = [str(k).strip() for k in raw_primary if k and str(k).strip()]
+            
+            # Extract price filter
             if price_max is None and parsed.get("price_max") is not None:
                 try:
                     price_max = float(parsed["price_max"])
                 except (TypeError, ValueError):
                     pass
+            
+            # Extract category
             if category is None and parsed.get("category"):
                 category = parsed.get("category")
+            
+            # Extract negative constraints
             raw_neg = parsed.get("negative_constraints")
             if isinstance(raw_neg, list):
                 negative_constraints = [str(x).strip() for x in raw_neg if x]
@@ -793,24 +996,71 @@ Respond with JSON only, no other text."""
             parsed = {}
     except Exception:
         parsed = {}
-        negative_constraints = []
+        search_queries = [user_query]
 
+    # Match category to available categories
     if category:
         matched = find_matching_category(category)
         category = matched if matched else None
 
-    results = run_embed_and_search(search_text, None, top_k=limit, price_max=price_max, category=category)
-    if not results and (category or price_max):
-        results = run_embed_and_search(search_text, None, top_k=limit, price_max=price_max, category=None)
-    if not results and (category or price_max):
-        results = run_embed_and_search(search_text, None, top_k=limit, price_max=None, category=category)
-    if not results:
-        results = run_embed_and_search(search_text, None, top_k=limit, price_max=None, category=None)
-    if not results and search_text != user_query:
-        results = run_embed_and_search(user_query, None, top_k=limit, price_max=None, category=None)
+    # Execute search based on query type
+    if query_type == "exploratory" and len(search_queries) > 1:
+        # Multi-query search for exploratory queries (gifts, ideas, etc.)
+        # Fetch more results per query for better diversity
+        results_per_query = max(limit // len(search_queries) + 2, 5)
+        results = _multi_query_search(
+            queries=search_queries,
+            top_k_per_query=results_per_query,
+            price_max=price_max,
+            category=category,
+        )
+    else:
+        # Single query search for direct product queries
+        search_text = search_queries[0] if search_queries else user_query
+        fetch_limit = min(limit * 3, 30)  # Fetch 3x for better re-ranking pool
+        
+        results = run_embed_and_search(search_text, None, top_k=fetch_limit, price_max=price_max, category=category)
+        
+        # Fallback searches if no results
+        if not results and (category or price_max):
+            results = run_embed_and_search(search_text, None, top_k=fetch_limit, price_max=price_max, category=None)
+        if not results and (category or price_max):
+            results = run_embed_and_search(search_text, None, top_k=fetch_limit, price_max=None, category=category)
+        if not results:
+            results = run_embed_and_search(search_text, None, top_k=fetch_limit, price_max=None, category=None)
+        if not results and search_text != user_query:
+            results = run_embed_and_search(user_query, None, top_k=fetch_limit, price_max=None, category=None)
 
+    # Apply negative constraints filter
     results = _apply_negative_constraints_filter(results, negative_constraints)
+    
+    # Re-rank results based on keyword relevance
+    if primary_keywords and results:
+        # First pass: try to get results with keyword matches
+        reranked = _rerank_results(
+            results, 
+            primary_keywords, 
+            boost_weight=0.5,
+            require_keyword_match=True,  # Only keep results with keyword matches
+        )
+        
+        # If we got enough results with keyword matches, use them
+        if len(reranked) >= limit // 2:
+            results = reranked
+        else:
+            # Not enough keyword-matched results, use all results but still re-rank
+            # This handles cases where the catalog doesn't have many matching products
+            results = _rerank_results(
+                results, 
+                primary_keywords, 
+                boost_weight=0.5,
+                require_keyword_match=False,
+            )
+    
+    # Trim to requested limit after re-ranking
+    results = results[:limit]
 
+    # Generate summary (optional)
     summary = None
     if results and OPENROUTER_API_KEY:
         try:
@@ -824,9 +1074,17 @@ Respond with JSON only, no other text."""
             summary = (summary_response.content or "").strip()
         except Exception:
             pass
+    
     return {
         "query": user_query,
         "results": results,
         "summary": summary,
-        "filters_applied": {"price_max": price_max, "category": category, "negative_constraints": negative_constraints},
+        "filters_applied": {
+            "price_max": price_max,
+            "category": category,
+            "negative_constraints": negative_constraints,
+            "primary_keywords": primary_keywords,
+            "query_type": query_type,
+            "search_queries": search_queries,
+        },
     }

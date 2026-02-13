@@ -4,9 +4,11 @@ Use run_in_executor when calling from async code."""
 import io
 import logging
 import os
+import time
 from typing import List
 
 import requests
+from requests.exceptions import RequestException
 import torch
 from PIL import Image
 from transformers import CLIPModel, CLIPProcessor
@@ -111,14 +113,47 @@ def embed_texts(texts: List[str]) -> List[List[float]]:
     return feats.cpu().numpy().tolist()
 
 
+def _get_image_request_proxies():
+    """پراکسی برای دانلود تصویر: اول IMAGE_FETCH_PROXY، بعد env HTTP(S)_PROXY."""
+    from app.config import IMAGE_FETCH_PROXY
+    if IMAGE_FETCH_PROXY:
+        return {"http": IMAGE_FETCH_PROXY, "https": IMAGE_FETCH_PROXY}
+    proxies = {}
+    for key in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+        val = os.environ.get(key)
+        if val and val.strip():
+            proxies.setdefault("https", val.strip())
+            proxies.setdefault("http", val.strip())
+            return proxies
+    return None
+
+
+# شبیه مرورگر تا CDN (مثل علی‌اکسپرس) اتصال را قطع نکند
+IMAGE_REQUEST_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+}
+
+
 def embed_image_url(url: str) -> List[float]:
     """Download image from URL and embed. Returns 512-dim vector."""
     emb = get_embedder()
     model, processor, device = emb["model"], emb["processor"], emb["device"]
     if processor is None:
         raise RuntimeError("CLIP processor not loaded. Restart the app or check network and retry.")
-    resp = requests.get(url, timeout=10)
-    resp.raise_for_status()
+    proxies = _get_image_request_proxies()
+    last_err = None
+    for attempt in range(3):
+        try:
+            resp = requests.get(url, timeout=20, proxies=proxies, headers=IMAGE_REQUEST_HEADERS)
+            resp.raise_for_status()
+            break
+        except RequestException as e:
+            last_err = e
+            if attempt < 2:
+                time.sleep(1.0 * (attempt + 1))
+            else:
+                raise
     img = Image.open(io.BytesIO(resp.content)).convert("RGB")
     inputs = processor(images=img, return_tensors="pt")
     inputs = {k: v.to(device) for k, v in inputs.items()}

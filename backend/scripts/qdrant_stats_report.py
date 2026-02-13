@@ -189,7 +189,29 @@ def build_report() -> str:
     ]
 
     all_collections = get_all_collection_names(client)
-    lines.append("## خلاصه کالکشن‌ها")
+
+    # همهٔ کالکشن‌های واقعاً موجود در سرور
+    lines.append("## کالکشن‌های موجود در سرور")
+    lines.append("")
+    if not all_collections:
+        lines.append("هیچ کالکشنی در Qdrant وجود ندارد.")
+        lines.append("")
+        lines.append("برای پر شدن گزارش: ابتدا سرویس Qdrant را اجرا کنید و سپس **ingestion** (بارگذاری محصولات/فروشگاه/FAQ) را انجام دهید.")
+        lines.append("")
+    else:
+        lines.append("| کالکشن | تعداد نقاط | بعد وکتور |")
+        lines.append("|--------|------------|-----------|")
+        for col_name in sorted(all_collections):
+            info = get_collection_info(client, col_name)
+            if info:
+                pts = info.get("points_count", "—")
+                dim = info.get("vector_size") or "—"
+                lines.append(f"| {col_name} | {pts} | {dim} |")
+            else:
+                lines.append(f"| {col_name} | خطا | — |")
+        lines.append("")
+
+    lines.append("## خلاصه کالکشن‌های مورد انتظار (بر اساس config)")
     lines.append("")
     lines.append("| کالکشن | تعداد نقاط | بعد وکتور |")
     lines.append("|--------|------------|-----------|")
