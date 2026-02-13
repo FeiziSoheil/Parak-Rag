@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import localFont from "next/font/local";
 import { DirectionProvider } from "@/components/DirectionProvider";
+import { Toaster } from "@/components/ui/sonner";
+import { ThemeProvider } from "next-themes";
 import "./globals.css";
 
 const geistSans = localFont({
@@ -29,7 +31,12 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} font-sans antialiased min-h-screen bg-background text-foreground`}
       >
-        <DirectionProvider>{children}</DirectionProvider>
+        <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+          <DirectionProvider>
+            {children}
+            <Toaster position="bottom-right" richColors />
+          </DirectionProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

@@ -1,5 +1,6 @@
 "use client";
 
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -93,7 +94,9 @@ export function SessionSidebar({ currentSessionId, onNewSession, onSelectSession
       setSessions((prev) => [session, ...prev]);
       onNewSession(session);
       onSelectSession(session);
+      toast.success("New chat created");
     } catch {
+      toast.error("Session expired. Please log in again.");
       router.replace("/login");
     }
   }
@@ -113,7 +116,9 @@ export function SessionSidebar({ currentSessionId, onNewSession, onSelectSession
       await deleteSession(sessionId);
       setSessions((prev) => prev.filter((s) => s.id !== sessionId));
       onSessionDeleted?.(sessionId);
+      toast.success("Chat deleted");
     } catch {
+      toast.error("Could not delete. Please log in again.");
       router.replace("/login");
     } finally {
       setDeletingId(null);
@@ -122,6 +127,7 @@ export function SessionSidebar({ currentSessionId, onNewSession, onSelectSession
 
   function handleLogout() {
     clearToken();
+    toast.success("You have been logged out");
     router.replace("/login");
     router.refresh();
   }

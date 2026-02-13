@@ -2,6 +2,7 @@
 import asyncio
 import base64
 import json
+import re
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -32,12 +33,34 @@ from app.services.rag import (
     search_store,
     search_faq,
     detect_intent_with_llm,
+    detect_language_with_llm,
 )
 from app.services.stt import transcribe_audio
 from app.services.tts import text_to_speech_to_bytes
 
 router = APIRouter()
 _executor = ThreadPoolExecutor(max_workers=4)
+
+
+def _strip_markdown_for_tts(text: str) -> str:
+    """Remove common markdown so TTS reads plain text (no 'star star', 'hash', etc.)."""
+    t = text.strip()
+    if not t:
+        return t
+    # Remove **bold** and __bold__
+    t = re.sub(r"\*\*([^*]+)\*\*", r"\1", t)
+    t = re.sub(r"__([^_]+)__", r"\1", t)
+    # Remove *italic* and _italic_
+    t = re.sub(r"\*([^*]+)\*", r"\1", t)
+    t = re.sub(r"_([^_]+)_", r"\1", t)
+    # Remove ## headers
+    t = re.sub(r"^#+\s*", "", t, flags=re.MULTILINE)
+    # Remove list markers - , *, 1.
+    t = re.sub(r"^\s*[-*•]\s+", "", t, flags=re.MULTILINE)
+    t = re.sub(r"^\s*\d+\.\s+", "", t, flags=re.MULTILINE)
+    # Collapse multiple newlines
+    t = re.sub(r"\n{3,}", "\n\n", t)
+    return t.strip() or text.strip()
 
 
 def _format_product_context(products: list[dict]) -> str:
@@ -546,3 +569,33 @@ async def voice_chat(
     if audio_base64 is not None:
         response["audio_base64"] = audio_base64
     return response
+
+
+@router.post("/read-aloud")
+async def read_aloud(
+    text: str = Form(..., description="Text to synthesize (e.g. assistant message content)"),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Read aloud: detect language with LLM, then TTS with the appropriate voice.
+    Returns audio_base64 (MP3) and detected_lang (ISO 639-1). For empty or very short text returns 400.
+    """
+    plain = _strip_markdown_for_tts(text)
+    if not plain or len(plain) < 2:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Text is empty or too short to read aloud.",
+        )
+    loop = asyncio.get_event_loop()
+    detected_lang = await loop.run_in_executor(
+        _executor,
+        lambda: detect_language_with_llm(plain),
+    )
+    audio_bytes = await text_to_speech_to_bytes(plain, lang=detected_lang)
+    if not audio_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Text-to-speech failed. Please try again.",
+        )
+    audio_base64 = base64.b64encode(audio_bytes).decode("ascii")
+    return {"audio_base64": audio_base64, "detected_lang": detected_lang}

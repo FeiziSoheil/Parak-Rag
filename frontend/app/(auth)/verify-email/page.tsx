@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -34,10 +35,13 @@ export default function VerifyEmailPage() {
       .then((res) => {
         setStatus("success");
         setMessage(res.message);
+        toast.success(res.message);
       })
       .catch((err) => {
         setStatus("error");
-        setMessage(err instanceof Error ? err.message : "Verification failed");
+        const msg = err instanceof Error ? err.message : "Verification failed";
+        setMessage(msg);
+        toast.error(msg);
       });
   }, [token]);
 
@@ -49,8 +53,11 @@ export default function VerifyEmailPage() {
       await verifyEmailByCode(email, code);
       setStatus("success");
       setMessage("Email verified successfully. You can now log in.");
+      toast.success("Email verified successfully. You can now log in.");
     } catch (err) {
-      setCodeError(err instanceof Error ? err.message : "Invalid or expired code");
+      const msg = err instanceof Error ? err.message : "Invalid or expired code";
+      setCodeError(msg);
+      toast.error(msg);
     } finally {
       setCodeLoading(false);
     }

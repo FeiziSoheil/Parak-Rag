@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -37,8 +38,11 @@ export function RegisterForm() {
     try {
       await register(username, email, password);
       setRegistered(true);
+      toast.success("Account created. Check your email to verify.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Registration failed");
+      const msg = err instanceof Error ? err.message : "Registration failed";
+      setError(msg);
+      toast.error(msg);
     } finally {
       setLoading(false);
     }
@@ -50,8 +54,11 @@ export function RegisterForm() {
     try {
       const res = await resendVerificationEmail(email);
       setResendMessage(res.message);
+      toast.success(res.message);
     } catch (err) {
-      setResendMessage(err instanceof Error ? err.message : "Failed to resend");
+      const msg = err instanceof Error ? err.message : "Failed to resend";
+      setResendMessage(msg);
+      toast.error(msg);
     } finally {
       setResendLoading(false);
     }
@@ -64,8 +71,11 @@ export function RegisterForm() {
     try {
       await verifyEmailByCode(email, code);
       setCodeSuccess(true);
+      toast.success("Email verified. You can log in now.");
     } catch (err) {
-      setCodeError(err instanceof Error ? err.message : "Invalid or expired code");
+      const msg = err instanceof Error ? err.message : "Invalid or expired code";
+      setCodeError(msg);
+      toast.error(msg);
     } finally {
       setCodeLoading(false);
     }

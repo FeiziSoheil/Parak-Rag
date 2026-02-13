@@ -1,12 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { TrendingUp, Search, ShoppingCart, CreditCard } from "lucide-react";
 import { MessageList, type MessageEntry, type SuggestedPromptItem } from "./MessageList";
 import { MessageInput, type MessageInputHandle } from "./MessageInput";
 import { ProductSidebar } from "./ProductSidebar";
 import { Skeleton } from "@/components/ui/skeleton";
-import { getCurrentUser, getSessionMessages, sendChat, sendVoiceChat, detectIntent, voiceDetectIntent, type ProductSummary, type UserProfile } from "@/lib/api";
+import { getCurrentUser, getSessionMessages, sendChat, sendVoiceChat, readAloud, detectIntent, voiceDetectIntent, type ProductSummary, type UserProfile } from "@/lib/api";
 
 function getDisplayName(user: UserProfile | null): string {
   if (!user) return "";
@@ -67,6 +68,7 @@ export function ChatPanel({ sessionId }: Props) {
   /** When AI voice response is playing; VAD must be paused to avoid feedback loop. */
   const [isAISpeaking, setAISpeaking] = useState(false);
   const voiceAudioRef = useRef<HTMLAudioElement | null>(null);
+  const readAloudAudioRef = useRef<HTMLAudioElement | null>(null);
   const audioEndDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleAudioPlayStart = useCallback(() => {
@@ -92,6 +94,7 @@ export function ChatPanel({ sessionId }: Props) {
     }
     setAISpeaking(false);
     voiceAudioRef.current?.pause();
+    readAloudAudioRef.current?.pause();
   }, []);
 
   useEffect(() => {
@@ -270,8 +273,9 @@ export function ChatPanel({ sessionId }: Props) {
           products: products.length ? products : undefined,
         },
       ]);
-    } catch {
-      // Error handling - could show a toast here
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Message could not be sent.";
+      toast.error(msg);
     } finally {
       setSending(false);
     }
@@ -341,6 +345,8 @@ export function ChatPanel({ sessionId }: Props) {
       ]);
     } catch (err) {
       console.error("Voice message failed:", err);
+      const msg = err instanceof Error ? err.message : "Voice message failed.";
+      toast.error(msg);
       setMessages((prev) => [
         ...prev,
         {
@@ -354,6 +360,19 @@ export function ChatPanel({ sessionId }: Props) {
       setSending(false);
     }
   }
+
+  const handleReadAloud = useCallback(async (text: string) => {
+    if (!text?.trim() || !readAloudAudioRef.current) return;
+    try {
+      const { audio_base64 } = await readAloud(text);
+      if (audio_base64 && readAloudAudioRef.current) {
+        readAloudAudioRef.current.src = `data:audio/mpeg;base64,${audio_base64}`;
+        await readAloudAudioRef.current.play();
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Read aloud failed");
+    }
+  }, []);
 
   function handleRegenerate() {
     const len = messages.length;
@@ -390,6 +409,13 @@ export function ChatPanel({ sessionId }: Props) {
 
   return (
     <div className="flex flex-row h-full flex-1 min-w-0">
+      <audio
+        ref={readAloudAudioRef}
+        className="hidden"
+        aria-hidden
+        onPlay={handleAudioPlayStart}
+        onEnded={handleAudioPlayEnd}
+      />
       <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
         <div className="flex-1 min-h-0 flex flex-col w-full max-w-4xl mx-auto px-6 sm:px-8">
           <div className="flex-1 min-h-0 flex flex-col">
@@ -432,6 +458,7 @@ export function ChatPanel({ sessionId }: Props) {
                 voiceAudioRef={voiceAudioRef}
                 onAudioPlayStart={handleAudioPlayStart}
                 onAudioPlayEnd={handleAudioPlayEnd}
+                onReadAloud={handleReadAloud}
               />
             )}
           </div>

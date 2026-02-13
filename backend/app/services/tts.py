@@ -130,11 +130,15 @@ def _detect_language(text: str) -> str:
     return "en"
 
 
-def _get_voice_for_language(text: str, voice_override: Optional[str] = None) -> str:
-    """Return appropriate edge-tts voice based on detected language (50+ languages)."""
+def _get_voice_for_language(
+    text: str,
+    voice_override: Optional[str] = None,
+    lang_override: Optional[str] = None,
+) -> str:
+    """Return appropriate edge-tts voice based on detected or given language (50+ languages)."""
     if voice_override:
         return voice_override
-    lang = _detect_language(text)
+    lang = (lang_override or "").strip().lower() or _detect_language(text)
     # Optional config overrides for specific languages
     if lang == "fa":
         return TTS_VOICE_FA
@@ -143,14 +147,20 @@ def _get_voice_for_language(text: str, voice_override: Optional[str] = None) -> 
     return TTS_VOICE_MAP.get(lang) or TTS_VOICE_EN
 
 
-async def text_to_speech_to_bytes(text: str, voice: Optional[str] = None) -> Optional[bytes]:
+async def text_to_speech_to_bytes(
+    text: str,
+    voice: Optional[str] = None,
+    lang: Optional[str] = None,
+) -> Optional[bytes]:
     """
     Synthesize text to MP3 audio in memory. Returns bytes or None on failure.
     Uses edge-tts (Microsoft online); detects language and picks neural voice (50+ languages).
     """
     if not text or not text.strip():
         return None
-    voice_name = _get_voice_for_language(text, voice_override=voice)
+    voice_name = _get_voice_for_language(
+        text, voice_override=voice, lang_override=lang
+    )
     try:
         communicate = edge_tts.Communicate(text.strip(), voice_name)
         buffer = io.BytesIO()

@@ -7,6 +7,9 @@
   --foreground: #0f0f0f;
   --card: #ffffff;
   --card-foreground: #0f0f0f;
+  --popover: #ffffff;
+  --popover-foreground: #0f0f0f;
+  --radius: 0.5rem;
   
   /* Single subtle accent - neutral blue-gray */
   --primary: #52525b;
@@ -50,6 +53,9 @@
     --foreground: #fafafa;
     --card: #18181b;
     --card-foreground: #fafafa;
+    --popover: #18181b;
+    --popover-foreground: #fafafa;
+    --radius: 0.5rem;
     
     --primary: #a1a1aa;
     --primary-foreground: #18181b;
@@ -205,6 +211,20 @@ body {
 ::selection {
   background: color-mix(in srgb, var(--primary) 20%, transparent);
   color: var(--foreground);
+}
+
+/* Sonner toast — match shadcn style: dark rounded box, circle check icon, light text */
+[data-sonner-toast] {
+  background: var(--card) !important;
+  color: var(--card-foreground) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius) !important;
+  padding: 12px 16px !important;
+  font-weight: 500;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.15);
+}
+[data-sonner-toast] [data-icon] {
+  color: inherit;
 }
 
 /* Skeleton shimmer - visible loading animation */

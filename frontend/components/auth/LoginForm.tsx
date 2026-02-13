@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -24,10 +25,13 @@ export function LoginForm() {
     try {
       const data = await login(username, password);
       setToken((data as { access_token: string }).access_token);
+      toast.success("You are logged in");
       router.replace("/chat");
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Login failed");
+      const msg = err instanceof Error ? err.message : "Login failed";
+      setError(msg);
+      toast.error(msg);
     } finally {
       setLoading(false);
     }

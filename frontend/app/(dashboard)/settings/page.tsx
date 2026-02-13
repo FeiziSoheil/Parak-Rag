@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import { isAuthenticated } from "@/lib/auth";
 import {
   getSettings,
@@ -59,9 +60,13 @@ export default function SettingsPage() {
 
   function handleSaveTopK() {
     const n = parseInt(topK, 10);
-    if (Number.isNaN(n) || n < 1 || n > 100) return;
+    if (Number.isNaN(n) || n < 1 || n > 100) {
+      toast.error("Enter a number between 1 and 100");
+      return;
+    }
     if (typeof window !== "undefined") localStorage.setItem(RAG_TOP_K_KEY, String(n));
     setTopK(String(n));
+    toast.success("RAG Top K saved");
   }
 
   function handleIngestLimitChange(v: string) {
@@ -78,7 +83,6 @@ export default function SettingsPage() {
     try {
       const limit = ingestLimit.trim() ? parseInt(ingestLimit, 10) : undefined;
       if (ingestLimit.trim() && (Number.isNaN(limit!) || limit! < 1)) {
-        setIngestMessage("Limit must be a positive number.");
         return;
       }
       await triggerIngest(limit);
@@ -93,8 +97,11 @@ export default function SettingsPage() {
         current_index: null,
         current_subject: null,
       });
+      toast.success("Ingestion started");
     } catch (e) {
-      setIngestMessage(e instanceof Error ? e.message : "Error starting ingestion");
+      const msg = e instanceof Error ? e.message : "Error starting ingestion";
+      setIngestMessage(msg);
+      toast.error(msg);
     } finally {
       setIngestLoading(false);
     }
@@ -105,8 +112,11 @@ export default function SettingsPage() {
     try {
       await stopIngest();
       setIngestMessage("Stopping…");
+      toast.success("Stopping ingestion…");
     } catch (e) {
-      setIngestMessage(e instanceof Error ? e.message : "Error stopping ingestion");
+      const msg = e instanceof Error ? e.message : "Error stopping ingestion";
+      setIngestMessage(msg);
+      toast.error(msg);
     }
   }
 
@@ -116,8 +126,11 @@ export default function SettingsPage() {
     try {
       await triggerStoreFaqIngest();
       setStoreFaqMessage("Store & FAQ ingestion started. Data is synced to SQLite and embedded into Qdrant.");
+      toast.success("Store & FAQ ingestion started");
     } catch (e) {
-      setStoreFaqMessage(e instanceof Error ? e.message : "Error starting store/FAQ ingestion");
+      const msg = e instanceof Error ? e.message : "Error starting store/FAQ ingestion";
+      setStoreFaqMessage(msg);
+      toast.error(msg);
     } finally {
       setStoreFaqLoading(false);
     }

@@ -277,6 +277,45 @@ Rules:
     return {"needs_qdrant_search": len(message.strip()) > 15, "intent_type": "unknown", "confidence": 0.3}
 
 
+def detect_language_with_llm(text: str | None) -> str:
+    """
+    Use LLM to detect the language of the given text. Returns ISO 639-1 code (e.g. 'en', 'fa', 'ar', 'zh-cn').
+    Used for read-aloud to pick the appropriate TTS voice. Works for any language.
+    """
+    if not text or not text.strip():
+        return "en"
+    if len(text.strip()) < 3:
+        return "en"
+    if not OPENROUTER_API_KEY:
+        return "en"
+    prompt = f"""Determine the language of the following text. Reply with ONLY a single language code (ISO 639-1), e.g. en, fa, ar, fr, de, zh-cn, zh-tw, tr, es, ru.
+Use lowercase. For Chinese use zh-cn or zh-tw. No explanation, no quotes, no punctuation.
+
+Text:
+{text[:4000]}
+
+Language code:"""
+    try:
+        llm = ChatOpenAI(
+            model=OPENROUTER_MODEL,
+            openai_api_key=OPENROUTER_API_KEY,
+            openai_api_base=OPENROUTER_BASE_URL,
+            temperature=0,
+            max_tokens=10,
+        )
+        response = llm.invoke([HumanMessage(content=prompt)])
+        content = (response.content if hasattr(response, "content") else str(response)).strip().lower()
+        # Extract first word/token (in case LLM added something)
+        code = re.split(r"[\s,.\n]+", content)[0] if content else ""
+        if code and len(code) >= 2 and code.isalpha():
+            if code.startswith("zh"):
+                return code if code in ("zh-cn", "zh-tw") else "zh-cn"
+            return code[:10]  # cap length for safety
+    except Exception:
+        pass
+    return "en"
+
+
 def get_query_vector(text: str | None, image_bytes: bytes | None) -> list[float]:
     """Get embedding vector for the query (text or image). Used for parallel search in store/faq."""
     if image_bytes:

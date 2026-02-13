@@ -129,15 +129,19 @@ def upload_avatar(
             for chunk in file.file:
                 size += len(chunk)
                 if size > MAX_AVATAR_BYTES:
-                    path.unlink(missing_ok=True)
+                    # Don't unlink here: file is still open on Windows (PermissionError)
                     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File too large (max 3 MB).")
                 f.write(chunk)
     finally:
         file.file.close()
-    # Remove old avatar if different extension
+    # Remove old avatar if different extension (ignore Windows lock from browser/cache)
     for old in AVATAR_UPLOAD_DIR.glob(f"{current_user.id}.*"):
         if old != path:
-            old.unlink(missing_ok=True)
+            try:
+                old.unlink(missing_ok=True)
+            except OSError:
+                # File in use (e.g. WinError 32); leave it, new avatar is already saved
+                pass
     current_user.avatar_url = f"/api/auth/avatar/{current_user.id}"
     db.commit()
     db.refresh(current_user)

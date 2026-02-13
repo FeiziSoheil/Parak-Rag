@@ -26,11 +26,29 @@ export async function getCurrentUser(): Promise<UserProfile | null> {
   return res.json();
 }
 
-export function getAvatarUrl(avatarUrl: string | null | undefined): string | null {
+const AVATAR_UPDATED_KEY = "avatarUpdated";
+
+/**
+ * @param cacheBust - Optional value (e.g. Date.now()) appended as ?t=... so the browser refetches after avatar change.
+ * If not provided, uses localStorage "avatarUpdated" in the browser so sidebar and other views show the latest avatar.
+ */
+export function getAvatarUrl(avatarUrl: string | null | undefined, cacheBust?: string | number): string | null {
   if (!avatarUrl?.trim()) return null;
   const u = avatarUrl.trim();
   if (u.startsWith("http")) return u;
-  return `${API_BASE}${u.startsWith("/") ? "" : "/"}${u}`;
+  const base = `${API_BASE}${u.startsWith("/") ? "" : "/"}${u}`;
+  let t = cacheBust;
+  if (t === undefined && typeof window !== "undefined") {
+    const stored = localStorage.getItem(AVATAR_UPDATED_KEY);
+    if (stored) t = stored;
+  }
+  if (t !== undefined && t !== "") return `${base}?t=${t}`;
+  return base;
+}
+
+/** Call after successful avatar upload so all avatar URLs (profile, sidebar) refetch the new image. */
+export function touchAvatarUpdated(): void {
+  if (typeof window !== "undefined") localStorage.setItem(AVATAR_UPDATED_KEY, String(Date.now()));
 }
 
 export async function updateProfile(data: { first_name?: string; last_name?: string }): Promise<UserProfile> {
@@ -483,6 +501,29 @@ export async function sendVoiceChat(
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error((err as { detail?: string }).detail || "Voice chat failed");
+  }
+  return res.json();
+}
+
+export type ReadAloudResult = { audio_base64: string; detected_lang?: string };
+
+/**
+ * Read aloud: backend detects language with LLM and returns TTS audio.
+ * Use for assistant text messages (e.g. "Read aloud" button).
+ */
+export async function readAloud(text: string): Promise<ReadAloudResult> {
+  const token = getToken();
+  if (!token) throw new Error("Not authenticated");
+  const formData = new FormData();
+  formData.append("text", text);
+  const res = await fetch(`${API_BASE}/api/read-aloud`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: formData,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail || "Read aloud failed");
   }
   return res.json();
 }

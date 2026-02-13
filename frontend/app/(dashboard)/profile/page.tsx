@@ -2,12 +2,14 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { toast } from "sonner";
 import { isAuthenticated } from "@/lib/auth";
 import {
   getCurrentUser,
   updateProfile,
   uploadAvatar,
   getAvatarUrl,
+  touchAvatarUpdated,
   requestEmailChange,
   confirmEmailChange,
   requestPasswordChange,
@@ -44,6 +46,7 @@ export default function ProfilePage() {
   const [newPassword, setNewPassword] = useState("");
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [passwordMsg, setPasswordMsg] = useState<string | null>(null);
+  const [avatarKey, setAvatarKey] = useState(0);
   const avatarInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -68,10 +71,15 @@ export default function ProfilePage() {
       confirmEmailChange(confirmToken)
         .then((r) => {
           setConfirmEmailMsg(r.message);
+          toast.success(r.message);
           getCurrentUser().then(setUser);
           window.history.replaceState({}, "", "/profile");
         })
-        .catch((e) => setConfirmEmailMsg(e instanceof Error ? e.message : "Failed"));
+        .catch((e) => {
+          const msg = e instanceof Error ? e.message : "Failed";
+          setConfirmEmailMsg(msg);
+          toast.error(msg);
+        });
     }
   }, [mounted, router, searchParams]);
 
@@ -81,8 +89,11 @@ export default function ProfilePage() {
       await updateProfile({ first_name: firstName.trim() || undefined, last_name: lastName.trim() || undefined });
       setUser((u) => (u ? { ...u, first_name: firstName.trim() || null, last_name: lastName.trim() || null } : null));
       setProfileSaveMsg("Saved");
+      toast.success("Profile saved");
     } catch (e) {
-      setProfileSaveMsg(e instanceof Error ? e.message : "Failed");
+      const msg = e instanceof Error ? e.message : "Failed";
+      setProfileSaveMsg(msg);
+      toast.error(msg);
     }
   }
 
@@ -97,8 +108,11 @@ export default function ProfilePage() {
     try {
       const updated = await uploadAvatar(file);
       setUser(updated);
+      setAvatarKey((k) => k + 1);
+      touchAvatarUpdated();
+      toast.success("Photo updated");
     } catch {
-      // ignore
+      toast.error("Failed to upload photo");
     } finally {
       setAvatarLoading(false);
       e.target.value = "";
@@ -112,8 +126,10 @@ export default function ProfilePage() {
     try {
       await requestEmailChange(newEmail.trim());
       setEmailChangeSent(true);
+      toast.success("Confirmation link sent to your new email");
     } catch (e) {
       setEmailChangeSent(false);
+      toast.error(e instanceof Error ? e.message : "Failed to request email change");
     } finally {
       setEmailChangeLoading(false);
     }
@@ -125,8 +141,11 @@ export default function ProfilePage() {
     try {
       await requestPasswordChange();
       setPasswordStep("requested");
+      toast.success("Check your email for the code");
     } catch (e) {
-      setPasswordMsg(e instanceof Error ? e.message : "Failed");
+      const msg = e instanceof Error ? e.message : "Failed";
+      setPasswordMsg(msg);
+      toast.error(msg);
     }
   }
 
@@ -140,8 +159,11 @@ export default function ProfilePage() {
       setPasswordCode("");
       setNewPassword("");
       setPasswordMsg("Password updated.");
+      toast.success("Password updated");
     } catch (e) {
-      setPasswordMsg(e instanceof Error ? e.message : "Invalid or expired code.");
+      const msg = e instanceof Error ? e.message : "Invalid or expired code.";
+      setPasswordMsg(msg);
+      toast.error(msg);
     } finally {
       setPasswordLoading(false);
     }
@@ -198,7 +220,7 @@ export default function ProfilePage() {
                     className="relative shrink-0 size-16 rounded-full overflow-hidden bg-muted flex items-center justify-center text-2xl font-medium text-muted-foreground border-2 border-border"
                   >
                     {user?.avatar_url ? (
-                      <img src={getAvatarUrl(user.avatar_url) ?? ""} alt="" className="size-full object-cover" />
+                      <img src={getAvatarUrl(user.avatar_url, avatarKey) ?? ""} alt="" className="size-full object-cover" />
                     ) : (
                       (user?.username ?? "?").charAt(0).toUpperCase()
                     )}

@@ -3,6 +3,8 @@
 import { useState, useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { toast } from "sonner";
+import { Volume2 } from "lucide-react";
 import type { ProductSummary } from "@/lib/api";
 import { getProductImageUrl } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -57,6 +59,8 @@ type Props = {
   voiceAudioRef?: React.RefObject<HTMLAudioElement | null>;
   onAudioPlayStart?: () => void;
   onAudioPlayEnd?: () => void;
+  /** Read aloud: backend detects language and returns TTS; caller handles playback. */
+  onReadAloud?: (text: string) => Promise<void>;
 };
 
 function ProductCardImage({ url, alt }: { url: string; alt: string }) {
@@ -246,8 +250,9 @@ function CheckIcon({ className }: { className?: string }) {
   );
 }
 
-export function MessageList({ messages, sending, expectsQdrantSearch = false, welcomeMessage, suggestedPrompts, onSuggestedPromptClick, onRegenerate, selectedProductIds, onProductSelect, voiceAudioRef, onAudioPlayStart, onAudioPlayEnd }: Props) {
+export function MessageList({ messages, sending, expectsQdrantSearch = false, welcomeMessage, suggestedPrompts, onSuggestedPromptClick, onRegenerate, selectedProductIds, onProductSelect, voiceAudioRef, onAudioPlayStart, onAudioPlayEnd, onReadAloud }: Props) {
   const [copiedId, setCopiedId] = useState<number | null>(null);
+  const [readAloudLoadingId, setReadAloudLoadingId] = useState<number | null>(null);
   const [typewriterCompleteIds, setTypewriterCompleteIds] = useState<Set<number>>(() => new Set());
   const [loadingPhraseIndex, setLoadingPhraseIndex] = useState(0);
   const hadMessagesRef = useRef(false);
@@ -289,8 +294,19 @@ export function MessageList({ messages, sending, expectsQdrantSearch = false, we
       await navigator.clipboard.writeText(content);
       setCopiedId(messageId);
       setTimeout(() => setCopiedId(null), 2000);
+      toast.success("Copied to clipboard");
     } catch {
-      // ignore
+      toast.error("Could not copy");
+    }
+  }
+
+  async function handleReadAloud(content: string, messageId: number) {
+    if (!onReadAloud || !content?.trim()) return;
+    setReadAloudLoadingId(messageId);
+    try {
+      await onReadAloud(content);
+    } finally {
+      setReadAloudLoadingId(null);
     }
   }
 
@@ -438,6 +454,30 @@ export function MessageList({ messages, sending, expectsQdrantSearch = false, we
             </div>
             {m.role === "assistant" && m.content && (
               <div className="mt-1.5 flex items-center gap-0.5">
+                {onReadAloud && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                        onClick={() => handleReadAloud(m.content, m.id)}
+                        disabled={readAloudLoadingId === m.id}
+                        aria-label="Read aloud"
+                      >
+                        {readAloudLoadingId === m.id ? (
+                          <span className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent" />
+                        ) : (
+                          <Volume2 className="h-4 w-4 shrink-0" />
+                        )}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">
+                      <p>{readAloudLoadingId === m.id ? "Preparing…" : "Read aloud"}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                )}
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
