@@ -29,6 +29,7 @@ from app.services.rag import (
     run_rag_response,
     is_broad_products_query,
     products_from_search_results,
+    reorder_products_by_mention,
     get_query_vector,
     search_store,
     search_faq,
@@ -171,7 +172,7 @@ async def _run_chat_response(
                 _executor,
                 lambda: enhanced_search_with_llm(
                     user_query=user_text or "",
-                    limit=top_k or 10,
+                    limit=top_k or 3,
                     price_max=price_max,
                     category=category,
                     last_shown_products=last_shown,
@@ -204,6 +205,10 @@ async def _run_chat_response(
         _executor,
         lambda: run_rag_response(context, history, effective_message, search_by_image=search_by_image),
     )
+
+    # Reorder product cards to match the order they're mentioned in the LLM response
+    if products and full_text:
+        products = reorder_products_by_mention(full_text, products)
 
     db2 = SessionLocal()
     try:

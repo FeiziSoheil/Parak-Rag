@@ -134,6 +134,44 @@ def _apply_negative_constraints_filter(
     return out
 
 
+def _apply_exclude_terms_filter(
+    search_results: list[dict],
+    exclude_terms: list[str] | None,
+) -> list[dict]:
+    """Remove results whose product title/subject contains any of the exclude terms.
+    
+    This is a title-level filter (different from negative_constraints which is category-level).
+    Used to filter out products for the wrong audience, e.g. men's products for a female recipient.
+    """
+    if not exclude_terms or not search_results:
+        return search_results
+    
+    # Normalize exclude terms
+    normalized_terms = [t.lower().strip() for t in exclude_terms if t and t.strip()]
+    if not normalized_terms:
+        return search_results
+    
+    out = []
+    for r in search_results:
+        payload = r.get("payload") or {}
+        subject = (payload.get("subject") or "").lower()
+        category = (payload.get("category_name") or "").lower()
+        # Check if product title or category contains any exclude term
+        should_exclude = False
+        for term in normalized_terms:
+            # Check subject (product title)
+            if term in subject:
+                should_exclude = True
+                break
+            # Also check category name for gendered categories like "Men's Clothing"
+            if term in category:
+                should_exclude = True
+                break
+        if not should_exclude:
+            out.append(r)
+    return out
+
+
 def analyze_collection_data() -> dict:
     """Scroll Qdrant collection and return categories list and price stats (min/max/avg/count)."""
     client = QdrantClient(url=QDRANT_URL)
@@ -189,7 +227,12 @@ SYSTEM_PROMPT = """You are PARAK (پَرَک), an intelligent assistant (دست�
 - The context below may contain three sections: "--- Store Information ---" (address, hours, contact), "--- FAQ ---" (Q&A about orders, returns, payment, delivery), and "--- Relevant Products ---". Use all provided sections to answer; e.g. for return policy use the FAQ section, for "where are you" or "store name" use Store Information.
 - Use the conversation history for: the user's name, greetings, "how are you", "what's my name", and any non-product chit-chat. Remember what the user said (e.g. their name) and use it in later replies.
 - For product-related questions (e.g. "find me X", "do you have Y"): answer only from the provided product context. If the context says "No relevant products found" or does not contain the product, politely say you don't have that in your catalog and suggest trying different keywords.
-- When you have found products in the context: give a short reply (e.g. "Here are some options:" or "I found these products for you:") and do not list all product names in your message—product images and details are shown in cards below your message.
+- **CRITICAL — Relevance filtering:** When presenting products, ONLY mention products that are genuinely relevant to the user's specific request. Consider the recipient's gender, age, interests, and stated preferences:
+  - If the user asks for a gift for a **female** (girlfriend, wife, mother, sister): SKIP any product clearly intended for men (e.g. "Men Watch", "Men's Wallet", "Boy's Shirt"). Only present women's or unisex products.
+  - If the user asks for a gift for a **male** (boyfriend, husband, father, brother): SKIP any product clearly intended for women (e.g. "Women Dress", "Ladies Handbag", "Girl's Necklace"). Only present men's or unisex products.
+  - If the user mentions a **specific hobby or interest** (e.g. hiking, cooking, gaming): ONLY present products related to that hobby. SKIP unrelated items even if they appear in the context.
+  - If after filtering you have very few relevant products, present those few and say "These are the options I found in our catalog that match your criteria." Do NOT pad with irrelevant products.
+- When you have found products in the context: give a short reply and recommend only 3-4 options by name. The same number of product cards is shown below your message (typically 3), so keep your suggestions to 3-4 items so the text and the cards match. Do not list more than 3 product names.
 - When the user asks about one specific product (or "the first one", "that product"): answer only about that product. Do not suggest or mention other products unless the user asked for multiple options.
 - When the user asks for details or full information about one specific product and there is only one product in the context: provide all the product information (price, category, specifications, description) in your reply. Do not suggest or mention other products.
 - Do not invent product names, prices, or details. Only mention products that appear in the product context.
@@ -489,6 +532,82 @@ def products_from_search_results(search_results: list[dict]) -> list[dict]:
             "variants": p.get("variants") or [],
         })
     return products
+
+
+def reorder_products_by_mention(llm_text: str, products: list[dict]) -> list[dict]:
+    """Reorder product list so that products mentioned in the LLM response text
+    come first (in the order they appear in the text), followed by products
+    not mentioned (keeping their original relative order).
+    
+    This ensures the product cards displayed below the chat match the order
+    the assistant described them in the text.
+    """
+    if not llm_text or not products:
+        return products
+    
+    text_lower = llm_text.lower()
+    
+    # For each product, find the earliest position of its title in the text.
+    # We try multiple matching strategies for robustness:
+    # 1. Full subject match
+    # 2. First N significant words of subject (handles truncated mentions)
+    mentioned: list[tuple[int, int, dict]] = []  # (position_in_text, original_index, product)
+    not_mentioned: list[tuple[int, dict]] = []   # (original_index, product)
+    
+    for idx, product in enumerate(products):
+        subject = (product.get("subject") or "").strip()
+        if not subject:
+            not_mentioned.append((idx, product))
+            continue
+        
+        subject_lower = subject.lower()
+        best_pos = -1
+        
+        # Strategy 1: Find the full subject in text
+        pos = text_lower.find(subject_lower)
+        if pos >= 0:
+            best_pos = pos
+        
+        # Strategy 2: Try first 5-8 significant words (LLM often abbreviates product names)
+        if best_pos < 0:
+            words = [w for w in subject_lower.split() if len(w) > 2]
+            # Try decreasing window sizes: 8, 6, 5, 4 words
+            for window in (8, 6, 5, 4):
+                if len(words) >= window:
+                    fragment = " ".join(words[:window])
+                    pos = text_lower.find(fragment)
+                    if pos >= 0:
+                        best_pos = pos
+                        break
+        
+        # Strategy 3: Try matching distinctive words (words > 4 chars, first 3)
+        if best_pos < 0:
+            distinctive = [w for w in subject_lower.split() if len(w) > 4][:3]
+            if len(distinctive) >= 2:
+                # Check if at least 2 distinctive words appear near each other in the text
+                positions_found = []
+                for dw in distinctive:
+                    dpos = text_lower.find(dw)
+                    if dpos >= 0:
+                        positions_found.append(dpos)
+                # If at least 2 words found within 200 chars of each other, consider it a match
+                if len(positions_found) >= 2:
+                    positions_found.sort()
+                    if positions_found[-1] - positions_found[0] < 200:
+                        best_pos = positions_found[0]
+        
+        if best_pos >= 0:
+            mentioned.append((best_pos, idx, product))
+        else:
+            not_mentioned.append((idx, product))
+    
+    # Sort mentioned products by their position in the text (earliest first)
+    mentioned.sort(key=lambda x: x[0])
+    
+    # Build final list: mentioned first (in text order), then not-mentioned (in original order)
+    result = [item[2] for item in mentioned]
+    result.extend(item[1] for item in not_mentioned)
+    return result
 
 
 def build_context(search_results: list[dict]) -> str:
@@ -853,8 +972,9 @@ def _multi_query_search(
     top_k_per_query: int = 10,
     price_max: float | None = None,
     category: str | None = None,
+    min_score: float = 0.35,
 ) -> list[dict]:
-    """Execute multiple search queries and merge results.
+    """Execute multiple search queries and merge results with per-query quality filtering.
     
     For complex queries like "gift for mother", we search for multiple product types
     (perfume, jewelry, watch, etc.) and merge the results.
@@ -864,9 +984,10 @@ def _multi_query_search(
         top_k_per_query: Number of results per query
         price_max: Optional price filter
         category: Optional category filter
+        min_score: Minimum semantic score per result (filters low-quality matches)
     
     Returns:
-        Merged and deduplicated results
+        Merged, deduplicated, and sorted results
     """
     if not queries:
         return []
@@ -882,6 +1003,9 @@ def _multi_query_search(
             category=category,
         )
         
+        # Extract keywords from this specific query for per-query relevance boost
+        query_words = [w.lower().strip() for w in query.split() if len(w) > 2]
+        
         for r in results:
             payload = r.get("payload") or {}
             pid = payload.get("product_id")
@@ -890,11 +1014,19 @@ def _multi_query_search(
             if pid is not None and pid in seen_product_ids:
                 continue
             
+            # Skip very low scoring results
+            if (r.get("score") or 0) < min_score:
+                continue
+            
             if pid is not None:
                 seen_product_ids.add(pid)
             
+            # Tag the result with which query found it (for debugging)
+            r["_source_query"] = query
             all_results.append(r)
     
+    # Sort merged results by score descending
+    all_results.sort(key=lambda x: x.get("score", 0), reverse=True)
     return all_results
 
 
@@ -947,40 +1079,52 @@ def enhanced_search_with_llm(
 
 **Schema (all fields required; use null or empty array where not applicable):**
 - query_type: string ("direct" for specific product search, "exploratory" for gift/idea/recommendation queries)
-- search_queries: array of strings (English search queries to execute. For direct queries, use 1-2 queries. For exploratory queries like gifts, use 3-5 specific product type queries like ["perfume fragrance", "jewelry necklace bracelet", "watch smartwatch", "skincare beauty"])
-- primary_keywords: array of strings (keywords that should appear in relevant product titles, ordered by importance)
+- target_audience: string | null (who the product is for: "women", "men", "girls", "boys", "children", "unisex", or null if not specified)
+- search_queries: array of strings (English search queries to execute. IMPORTANT: include audience-specific terms in each query, e.g. "women" or "men". For direct queries, use 1-2 queries. For exploratory queries like gifts, use 3-5 specific product type queries)
+- primary_keywords: array of strings (keywords that MUST appear in relevant product titles, ordered by importance. Include gender/audience terms like "women", "ladies", "female" when the recipient is female, or "men", "male" when male)
+- exclude_terms: array of strings (words that should NOT appear in product titles. E.g. for a female recipient, exclude ["men", "men's", "male", "boy", "boys"]. For a male recipient, exclude ["women", "women's", "female", "girl", "girls", "ladies"]. For hobby-specific queries, exclude unrelated product types)
 - price_max: number | null (only if user explicitly mentions price)
 - category: string | null (one of the available categories, or null)
-- negative_constraints: array of strings (things user does NOT want)
+- negative_constraints: array of strings (product categories/types the user does NOT want)
 
 Available categories: {categories_context}
 {last_products_block}
+
+**Critical Rules:**
+1. ALWAYS set target_audience when the recipient's gender or age is clear from context (girlfriend/wife/mother → "women", boyfriend/husband/father → "men", daughter → "girls", son → "boys")
+2. ALWAYS populate exclude_terms to filter out products meant for the WRONG audience (e.g. men's products for a female recipient)
+3. search_queries MUST be specific and targeted. Include the audience in the query text (e.g. "women watch elegant" not just "watch elegant")
+4. For hobby/interest-based queries, search_queries should focus ONLY on that hobby (e.g. hiking → outdoor/camping gear, NOT random items)
 
 **Examples:**
 
 Example 1 – Direct product query:
 Query: "قاب گوشی"
-Response: {{"query_type": "direct", "search_queries": ["phone case cover protective"], "primary_keywords": ["case", "cover", "phone case", "protective"], "price_max": null, "category": null, "negative_constraints": []}}
+Response: {{"query_type": "direct", "target_audience": null, "search_queries": ["phone case cover protective"], "primary_keywords": ["case", "cover", "phone case", "protective"], "exclude_terms": [], "price_max": null, "category": null, "negative_constraints": []}}
 
-Example 2 – Direct product query:
-Query: "هدفون بلوتوث"
-Response: {{"query_type": "direct", "search_queries": ["bluetooth headphone wireless earphone"], "primary_keywords": ["headphone", "earphone", "headset", "earbuds", "bluetooth", "wireless"], "price_max": null, "category": null, "negative_constraints": []}}
+Example 2 – Birthday gift for girlfriend:
+Query: "برای دوست دخترم میخوام کادوی تولد بگیرم"
+Response: {{"query_type": "exploratory", "target_audience": "women", "search_queries": ["women perfume fragrance gift", "women jewelry necklace bracelet ring", "women skincare beauty cream set", "women watch elegant ladies", "women handbag purse fashion"], "primary_keywords": ["women", "ladies", "female", "perfume", "jewelry", "necklace", "skincare", "beauty", "watch", "handbag", "gift"], "exclude_terms": ["men", "men's", "male", "boy", "boys", "masculine"], "price_max": null, "category": null, "negative_constraints": []}}
 
-Example 3 – Gift for mother (exploratory):
+Example 3 – Gift for father who likes hiking:
+Query: "برای پدرم که به کوهنوردی علاقه داره کادو میخوام"
+Response: {{"query_type": "exploratory", "target_audience": "men", "search_queries": ["hiking backpack outdoor mountaineering", "camping equipment tent sleeping bag", "hiking boots shoes outdoor trekking", "outdoor sports water bottle thermos", "hiking flashlight headlamp camping gear"], "primary_keywords": ["hiking", "outdoor", "camping", "trekking", "mountaineering", "backpack", "boots", "sports"], "exclude_terms": ["women", "women's", "female", "girl", "girls", "ladies", "baby", "kids", "pencil", "stationery", "kitchen"], "price_max": null, "category": null, "negative_constraints": []}}
+
+Example 4 – Gift for mother:
 Query: "کادو برای مادر" or "هدیه روز مادر"
-Response: {{"query_type": "exploratory", "search_queries": ["perfume fragrance women scent", "jewelry necklace bracelet ring", "skincare beauty cream serum", "watch women elegant", "scarf shawl fashion"], "primary_keywords": ["perfume", "fragrance", "jewelry", "necklace", "skincare", "beauty", "watch", "scarf", "gift", "women"], "price_max": null, "category": null, "negative_constraints": []}}
-
-Example 4 – Gift for spouse birthday:
-Query: "کادو تولد همسر"
-Response: {{"query_type": "exploratory", "search_queries": ["perfume cologne fragrance", "jewelry ring necklace", "watch smartwatch elegant", "wallet leather accessories"], "primary_keywords": ["perfume", "jewelry", "watch", "wallet", "gift", "romantic"], "price_max": null, "category": null, "negative_constraints": []}}
+Response: {{"query_type": "exploratory", "target_audience": "women", "search_queries": ["women perfume fragrance elegant scent", "women jewelry necklace bracelet ring gold", "women skincare beauty cream anti-aging serum", "women scarf shawl fashion silk", "women watch elegant ladies classic"], "primary_keywords": ["women", "ladies", "perfume", "fragrance", "jewelry", "necklace", "skincare", "beauty", "watch", "scarf", "gift"], "exclude_terms": ["men", "men's", "male", "boy", "boys"], "price_max": null, "category": null, "negative_constraints": []}}
 
 Example 5 – Gift for child (no toys):
 Query: "کادو برای بچه ولی اسباب بازی نباشه"
-Response: {{"query_type": "exploratory", "search_queries": ["children books educational", "kids clothes fashion", "school supplies stationery", "children shoes sneakers"], "primary_keywords": ["kids", "children", "educational", "books", "clothes", "school"], "price_max": null, "category": null, "negative_constraints": ["toys", "toy", "game"]}}
+Response: {{"query_type": "exploratory", "target_audience": "children", "search_queries": ["children books educational learning", "kids clothes fashion cute", "school supplies stationery set", "children shoes sneakers colorful"], "primary_keywords": ["kids", "children", "educational", "books", "clothes", "school", "child"], "exclude_terms": [], "price_max": null, "category": null, "negative_constraints": ["toys", "toy", "game", "doll", "puzzle"]}}
 
-Example 6 – Teacher's day gift:
-Query: "هدیه روز معلم"
-Response: {{"query_type": "exploratory", "search_queries": ["pen set elegant writing", "notebook journal planner", "desk organizer office", "mug cup gift"], "primary_keywords": ["pen", "notebook", "planner", "desk", "office", "gift", "elegant"], "price_max": null, "category": null, "negative_constraints": []}}
+Example 6 – Bluetooth headphones:
+Query: "هدفون بلوتوث"
+Response: {{"query_type": "direct", "target_audience": null, "search_queries": ["bluetooth headphone wireless earphone"], "primary_keywords": ["headphone", "earphone", "headset", "earbuds", "bluetooth", "wireless"], "exclude_terms": [], "price_max": null, "category": null, "negative_constraints": []}}
+
+Example 7 – Gift for husband/boyfriend:
+Query: "کادو تولد همسرم (آقا)"
+Response: {{"query_type": "exploratory", "target_audience": "men", "search_queries": ["men cologne perfume fragrance", "men watch smartwatch elegant", "men wallet leather accessories", "men belt leather fashion", "men sunglasses fashion sport"], "primary_keywords": ["men", "male", "cologne", "watch", "wallet", "belt", "sunglasses", "leather"], "exclude_terms": ["women", "women's", "female", "girl", "girls", "ladies", "lipstick", "dress"], "price_max": null, "category": null, "negative_constraints": []}}
 
 Query: "{user_query}"
 
@@ -990,6 +1134,8 @@ Respond with JSON only, no other text."""
     search_queries: list[str] = [user_query]
     primary_keywords: list[str] = []
     negative_constraints: list[str] = []
+    exclude_terms: list[str] = []
+    target_audience: str | None = None
     query_type = "direct"
     
     try:
@@ -1004,6 +1150,9 @@ Respond with JSON only, no other text."""
             # Extract query type
             query_type = parsed.get("query_type", "direct")
             
+            # Extract target audience
+            target_audience = parsed.get("target_audience")
+            
             # Extract search queries
             raw_queries = parsed.get("search_queries")
             if isinstance(raw_queries, list) and raw_queries:
@@ -1013,6 +1162,13 @@ Respond with JSON only, no other text."""
             raw_primary = parsed.get("primary_keywords")
             if isinstance(raw_primary, list):
                 primary_keywords = [str(k).strip() for k in raw_primary if k and str(k).strip()]
+            
+            # Extract exclude_terms (words that must NOT appear in product titles)
+            raw_exclude = parsed.get("exclude_terms")
+            if isinstance(raw_exclude, list):
+                exclude_terms = [str(x).strip().lower() for x in raw_exclude if x and str(x).strip()]
+            elif isinstance(raw_exclude, str) and raw_exclude:
+                exclude_terms = [raw_exclude.strip().lower()]
             
             # Extract price filter
             if price_max is None and parsed.get("price_max") is not None:
@@ -1036,6 +1192,28 @@ Respond with JSON only, no other text."""
     except Exception:
         parsed = {}
         search_queries = [user_query]
+
+    # Auto-expand exclude_terms based on target_audience
+    # When the recipient is an adult, auto-exclude children's product terms
+    if target_audience in ("men", "women"):
+        adult_auto_exclude = {"children", "child", "toddler", "infant", "baby", "kid", "kids"}
+        existing = set(exclude_terms)
+        for term in adult_auto_exclude:
+            if term not in existing:
+                exclude_terms.append(term)
+    # When target is men, ensure women terms are excluded and vice versa
+    if target_audience == "women":
+        women_auto_exclude = {"men", "men's", "male", "boy", "boys", "masculine", "husband"}
+        existing = set(exclude_terms)
+        for term in women_auto_exclude:
+            if term not in existing:
+                exclude_terms.append(term)
+    elif target_audience == "men":
+        men_auto_exclude = {"women", "women's", "female", "girl", "girls", "ladies", "feminine"}
+        existing = set(exclude_terms)
+        for term in men_auto_exclude:
+            if term not in existing:
+                exclude_terms.append(term)
 
     # Match category to available categories
     if category:
@@ -1070,8 +1248,11 @@ Respond with JSON only, no other text."""
         if not results and search_text != user_query:
             results = run_embed_and_search(user_query, None, top_k=fetch_limit, price_max=None, category=None)
 
-    # Apply negative constraints filter
+    # Apply negative constraints filter (category-level)
     results = _apply_negative_constraints_filter(results, negative_constraints)
+    
+    # Apply exclude_terms filter (title-level, e.g. remove men's products for female recipient)
+    results = _apply_exclude_terms_filter(results, exclude_terms)
     
     # Re-rank results based on keyword relevance
     if primary_keywords and results:
@@ -1079,22 +1260,29 @@ Respond with JSON only, no other text."""
         reranked = _rerank_results(
             results, 
             primary_keywords, 
-            boost_weight=0.5,
+            boost_weight=0.6,
             require_keyword_match=True,  # Only keep results with keyword matches
         )
         
         # If we got enough results with keyword matches, use them
-        if len(reranked) >= limit // 2:
+        if len(reranked) >= max(limit // 3, 2):
             results = reranked
         else:
-            # Not enough keyword-matched results, use all results but still re-rank
-            # This handles cases where the catalog doesn't have many matching products
-            results = _rerank_results(
+            # Not enough keyword-matched results; re-rank all but still sort by relevance.
+            # Keep only results that have at least SOME keyword relevance (> 0) or a high semantic score.
+            all_reranked = _rerank_results(
                 results, 
                 primary_keywords, 
-                boost_weight=0.5,
+                boost_weight=0.6,
                 require_keyword_match=False,
             )
+            # Filter out results with zero keyword relevance AND low semantic score
+            # This prevents completely unrelated products from showing up
+            filtered = [
+                r for r in all_reranked
+                if r.get("keyword_relevance", 0) > 0 or r.get("original_score", r.get("score", 0)) >= 0.5
+            ]
+            results = filtered if filtered else all_reranked[:limit]
     
     # Trim to requested limit after re-ranking
     results = results[:limit]
@@ -1122,6 +1310,8 @@ Respond with JSON only, no other text."""
             "price_max": price_max,
             "category": category,
             "negative_constraints": negative_constraints,
+            "exclude_terms": exclude_terms,
+            "target_audience": target_audience,
             "primary_keywords": primary_keywords,
             "query_type": query_type,
             "search_queries": search_queries,
