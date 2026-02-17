@@ -345,14 +345,21 @@ export function ChatPanel({ sessionId }: Props) {
       ]);
     } catch (err) {
       console.error("Voice message failed:", err);
-      const msg = err instanceof Error ? err.message : "Voice message failed.";
-      toast.error(msg);
+      const errMsg = err instanceof Error ? err.message : "Voice message failed.";
+      // Show more helpful error message based on error type
+      let userMessage = "Sorry, voice message failed. Please try again or use text.";
+      if (errMsg.includes("timeout") || errMsg.includes("fetch") || errMsg.includes("network")) {
+        userMessage = "Connection timed out. The server may be busy. Please try again in a moment.";
+      } else if (errMsg.includes("transcription") || errMsg.includes("speech")) {
+        userMessage = "Could not understand the audio. Please speak clearly and try again.";
+      }
+      toast.error(errMsg);
       setMessages((prev) => [
         ...prev,
         {
           id: nextTempIdRef.current--,
           role: "assistant",
-          content: "Sorry, voice message failed. Please try again or use text.",
+          content: userMessage,
           image_url: null,
         },
       ]);

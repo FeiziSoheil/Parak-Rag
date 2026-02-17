@@ -21,6 +21,9 @@ CLIP_VECTOR_SIZE = 512
 
 # Longer timeout for slow networks (HuggingFace download); 10 minutes
 HF_DOWNLOAD_TIMEOUT_SEC = 600
+# Retries for HuggingFace download (connection often drops on first try)
+HF_LOAD_RETRIES = 3
+HF_LOAD_RETRY_DELAY_SEC = 5
 # If set to "1", no Hub requests (avoids Thread-auto_conversion timeout after load). Use when model is already cached.
 # Example: set HF_HUB_OFFLINE=1 in env before starting the server to suppress the auto_conversion exception.
 
@@ -28,6 +31,25 @@ HF_DOWNLOAD_TIMEOUT_SEC = 600
 _model = None
 _processor = None
 _device = None
+
+
+def _load_with_retry(load_fn, name: str):
+    """Call load_fn() with retries on OSError/RuntimeError (e.g. connection closed)."""
+    last_err = None
+    for attempt in range(1, HF_LOAD_RETRIES + 1):
+        try:
+            return load_fn()
+        except (OSError, RuntimeError) as e:
+            last_err = e
+            if attempt < HF_LOAD_RETRIES:
+                logger.warning(
+                    "HuggingFace load %s failed (attempt %d/%d): %s. Retrying in %ds...",
+                    name, attempt, HF_LOAD_RETRIES, e, HF_LOAD_RETRY_DELAY_SEC,
+                )
+                time.sleep(HF_LOAD_RETRY_DELAY_SEC)
+            else:
+                raise
+    raise last_err
 
 
 def get_embedder():
@@ -38,8 +60,14 @@ def get_embedder():
             # Avoid read timeout on slow connections (HuggingFace default is 10s)
             os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", str(HF_DOWNLOAD_TIMEOUT_SEC))
             logger.info("Loading CLIP model (%s)...", CLIP_MODEL_ID)
-            _model = CLIPModel.from_pretrained(CLIP_MODEL_ID)
-            _processor = CLIPProcessor.from_pretrained(CLIP_MODEL_ID)
+            _model = _load_with_retry(
+                lambda: CLIPModel.from_pretrained(CLIP_MODEL_ID),
+                "CLIPModel",
+            )
+            _processor = _load_with_retry(
+                lambda: CLIPProcessor.from_pretrained(CLIP_MODEL_ID),
+                "CLIPProcessor",
+            )
             _device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             if torch.cuda.is_available():
                 logger.info("GPU detected: %s", torch.cuda.get_device_name(0))
