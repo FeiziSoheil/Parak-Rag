@@ -35,6 +35,7 @@ from app.services.rag import (
     search_faq,
     detect_intent_with_llm,
     detect_language_with_llm,
+    detect_emotion_with_llm,
 )
 from app.services.stt import transcribe_audio
 from app.services.tts import text_to_speech_to_bytes
@@ -210,6 +211,13 @@ async def _run_chat_response(
     if products and full_text:
         products = reorder_products_by_mention(full_text, products)
 
+    suggested_emotion = await loop.run_in_executor(
+        _executor,
+        lambda: detect_emotion_with_llm(effective_message, full_text),
+    )
+    if suggested_emotion is None:
+        suggested_emotion = "neutral"
+
     db2 = SessionLocal()
     try:
         user_msg = Message(session_id=session_id, role="user", content=effective_message, image_url=None)
@@ -228,7 +236,7 @@ async def _run_chat_response(
     finally:
         db2.close()
 
-    return full_text, products
+    return full_text, products, suggested_emotion
 
 
 # دامنه‌های مجاز برای پروکسی تصویر (جلوگیری از abuse)
@@ -478,11 +486,11 @@ async def chat(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="top_k must be between 1 and 100")
 
     effective_message = message.strip() or "(user sent an image)"
-    full_text, products = await _run_chat_response(
+    full_text, products, suggested_emotion = await _run_chat_response(
         db, session_id, effective_message,
         image_bytes=image_bytes, top_k=top_k, price_max=price_max, category=category,
     )
-    return {"message": full_text, "products": products}
+    return {"message": full_text, "products": products, "suggested_emotion": suggested_emotion}
 
 
 @router.post("/voice-chat")
@@ -554,7 +562,7 @@ async def voice_chat(
     else:
         effective_message = transcribed_text
 
-    full_text, products = await _run_chat_response(
+    full_text, products, suggested_emotion = await _run_chat_response(
         db, session_id, effective_message, image_bytes=None,
     )
 
@@ -569,6 +577,7 @@ async def voice_chat(
     response = {
         "message": full_text,
         "products": products,
+        "suggested_emotion": suggested_emotion,
         "transcribed_text": text.strip(),
     }
     if audio_base64 is not None:

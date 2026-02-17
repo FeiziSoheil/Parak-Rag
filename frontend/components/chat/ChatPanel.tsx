@@ -6,6 +6,7 @@ import { TrendingUp, Search, ShoppingCart, CreditCard } from "lucide-react";
 import { MessageList, type MessageEntry, type SuggestedPromptItem } from "./MessageList";
 import { MessageInput, type MessageInputHandle } from "./MessageInput";
 import { ProductSidebar } from "./ProductSidebar";
+import type { AIAvatarState, AIAvatarEmotion } from "./AIAvatar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getCurrentUser, getSessionMessages, sendChat, sendVoiceChat, readAloud, detectIntent, voiceDetectIntent, type ProductSummary, type UserProfile } from "@/lib/api";
 
@@ -70,6 +71,32 @@ export function ChatPanel({ sessionId }: Props) {
   const voiceAudioRef = useRef<HTMLAudioElement | null>(null);
   const readAloudAudioRef = useRef<HTMLAudioElement | null>(null);
   const audioEndDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  
+  // Avatar emotion — context-based (not cycling randomly)
+  const [avatarEmotion, setAvatarEmotion] = useState<AIAvatarEmotion>("neutral");
+  const emotionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  
+  // Track clicks for "angry" emotion (if user clicks avatar too much)
+  const avatarClickTimestamps = useRef<number[]>([]);
+  const ANGRY_CLICK_THRESHOLD = 5; // clicks
+  const ANGRY_CLICK_WINDOW_MS = 3000; // 3 seconds
+  const ANGRY_DURATION_MS = 5000; // stay angry for 5 seconds
+  
+  // LLM-suggested emotion: show for 5s after each chat/voice response, then reset to neutral
+  const LLM_EMOTION_DURATION_MS = 5000;
+  const ALLOWED_LLM_EMOTIONS: AIAvatarEmotion[] = ["neutral", "happy", "excited", "sad", "confused", "surprised", "love"];
+  
+  // If response takes > 8s, show "annoyed" emotion
+  const ANNOYED_THRESHOLD_MS = 8000;
+  const [sendingElapsedMs, setSendingElapsedMs] = useState(0);
+  const sendingStartRef = useRef<number | null>(null);
+  const sendingTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // When user doesn't send for a long time, show "sleepy" (sleeping) avatar
+  const SLEEPY_IDLE_MS = 120000; // 2 minutes
+  const [idleLong, setIdleLong] = useState(false);
+  const lastMessageSentAtRef = useRef<number>(0);
+  const sleepyCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const handleAudioPlayStart = useCallback(() => {
     if (audioEndDelayRef.current) {
@@ -100,6 +127,69 @@ export function ChatPanel({ sessionId }: Props) {
   useEffect(() => {
     return () => {
       if (audioEndDelayRef.current) clearTimeout(audioEndDelayRef.current);
+    };
+  }, []);
+
+  // Track sending duration — if > 8s, avatar shows "annoyed"
+  useEffect(() => {
+    if (sending) {
+      sendingStartRef.current = Date.now();
+      setSendingElapsedMs(0);
+      sendingTickRef.current = setInterval(() => {
+        const start = sendingStartRef.current;
+        if (start != null) setSendingElapsedMs(Date.now() - start);
+      }, 500);
+      return () => {
+        if (sendingTickRef.current) clearInterval(sendingTickRef.current);
+        sendingTickRef.current = null;
+      };
+    }
+    sendingStartRef.current = null;
+    sendingTickRef.current = null;
+    setSendingElapsedMs(0);
+  }, [sending]);
+
+  // Normalize LLM suggested_emotion (backend may return "worried" -> map to "confused"; only allow known emotions)
+  const applySuggestedEmotion = useCallback((suggested_emotion: string | undefined) => {
+    if (!suggested_emotion || suggested_emotion === "neutral") return;
+    const normalized = suggested_emotion.toLowerCase().trim() === "worried" ? "confused" : suggested_emotion.toLowerCase().trim();
+    if (!ALLOWED_LLM_EMOTIONS.includes(normalized as AIAvatarEmotion)) return;
+    if (emotionTimeoutRef.current) clearTimeout(emotionTimeoutRef.current);
+    setAvatarEmotion(normalized as AIAvatarEmotion);
+    emotionTimeoutRef.current = setTimeout(() => {
+      setAvatarEmotion("neutral");
+      emotionTimeoutRef.current = null;
+    }, LLM_EMOTION_DURATION_MS);
+  }, []);
+
+  // Handle avatar click — if clicked too much, get angry
+  const handleAvatarClick = useCallback(() => {
+    const now = Date.now();
+    // Add current click
+    avatarClickTimestamps.current.push(now);
+    // Remove clicks older than window
+    avatarClickTimestamps.current = avatarClickTimestamps.current.filter(
+      (ts) => now - ts < ANGRY_CLICK_WINDOW_MS
+    );
+    
+    // If too many clicks, get angry
+    if (avatarClickTimestamps.current.length >= ANGRY_CLICK_THRESHOLD) {
+      if (emotionTimeoutRef.current) clearTimeout(emotionTimeoutRef.current);
+      setAvatarEmotion("angry");
+      avatarClickTimestamps.current = []; // Reset
+      
+      // Return to neutral after duration
+      emotionTimeoutRef.current = setTimeout(() => {
+        setAvatarEmotion("neutral");
+        emotionTimeoutRef.current = null;
+      }, ANGRY_DURATION_MS);
+    }
+  }, []);
+
+  // Cleanup emotion timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (emotionTimeoutRef.current) clearTimeout(emotionTimeoutRef.current);
     };
   }, []);
 
@@ -148,14 +238,31 @@ export function ChatPanel({ sessionId }: Props) {
   useEffect(() => {
     if (!sessionId) {
       setMessages([]);
+      setIdleLong(false);
       return;
     }
+    lastMessageSentAtRef.current = Date.now();
+    setIdleLong(false);
     setLoading(true);
     getSessionMessages(sessionId)
       .then(setMessages)
       .catch(() => setMessages([]))
       .finally(() => setLoading(false));
   }, [sessionId]);
+
+  // Check periodically: if user hasn't sent for 2 min, show sleepy avatar
+  useEffect(() => {
+    if (!sessionId) return;
+    sleepyCheckRef.current = setInterval(() => {
+      if (sending || isAISpeaking) return;
+      const last = lastMessageSentAtRef.current;
+      if (last > 0 && Date.now() - last >= SLEEPY_IDLE_MS) setIdleLong(true);
+    }, 20000);
+    return () => {
+      if (sleepyCheckRef.current) clearInterval(sleepyCheckRef.current);
+      sleepyCheckRef.current = null;
+    };
+  }, [sessionId, sending, isAISpeaking]);
 
   const displayName = getDisplayName(user);
   const dashboardWelcome = displayName
@@ -233,6 +340,8 @@ export function ChatPanel({ sessionId }: Props) {
 
   async function handleSend(message: string, imageFile: File | null, attachedProducts?: ProductSummary[]) {
     if (!sessionId) return;
+    lastMessageSentAtRef.current = Date.now();
+    setIdleLong(false);
     const productsToAttach = attachedProducts ?? selectedProducts;
     const effectiveMessage = productsToAttach.length > 0 ? formatProductContext(productsToAttach) + message.trim() : message;
     const trimmedMessage = message.trim();
@@ -257,7 +366,7 @@ export function ChatPanel({ sessionId }: Props) {
     }
     
     try {
-      const { message: responseText, products } = await sendChat(
+      const { message: responseText, products, suggested_emotion } = await sendChat(
         sessionId,
         effectiveMessage,
         imageFile,
@@ -273,6 +382,7 @@ export function ChatPanel({ sessionId }: Props) {
           products: products.length ? products : undefined,
         },
       ]);
+      applySuggestedEmotion(suggested_emotion);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Message could not be sent.";
       toast.error(msg);
@@ -283,7 +393,8 @@ export function ChatPanel({ sessionId }: Props) {
 
   async function handleSendVoice(voiceFile: File, attachedProducts?: ProductSummary[]) {
     if (!sessionId) return;
-    
+    lastMessageSentAtRef.current = Date.now();
+    setIdleLong(false);
     // Use attached products from parameter or current selection
     const productsToAttach = attachedProducts ?? selectedProducts;
     
@@ -327,7 +438,7 @@ export function ChatPanel({ sessionId }: Props) {
     
     // Then: send voice chat for full response (with selected products)
     try {
-      const { message: responseText, products, audio_base64 } = await sendVoiceChat(
+      const { message: responseText, products, audio_base64, suggested_emotion } = await sendVoiceChat(
         sessionId,
         voiceFile,
         productsToAttach.length > 0 ? productsToAttach : undefined
@@ -343,6 +454,7 @@ export function ChatPanel({ sessionId }: Props) {
           audioBase64: audio_base64 ?? undefined,
         },
       ]);
+      applySuggestedEmotion(suggested_emotion);
     } catch (err) {
       console.error("Voice message failed:", err);
       const errMsg = err instanceof Error ? err.message : "Voice message failed.";
@@ -414,6 +526,14 @@ export function ChatPanel({ sessionId }: Props) {
     );
   }
 
+  const avatarState: AIAvatarState = sending ? "thinking" : isAISpeaking ? "speaking" : "idle";
+  const effectiveAvatarEmotion: AIAvatarEmotion =
+    sending && sendingElapsedMs >= ANNOYED_THRESHOLD_MS
+      ? "annoyed"
+      : !sending && !isAISpeaking && idleLong
+        ? "sleepy"
+        : avatarEmotion;
+
   return (
     <div className="flex flex-row h-full flex-1 min-w-0">
       <audio
@@ -466,6 +586,9 @@ export function ChatPanel({ sessionId }: Props) {
                 onAudioPlayStart={handleAudioPlayStart}
                 onAudioPlayEnd={handleAudioPlayEnd}
                 onReadAloud={handleReadAloud}
+                avatarState={avatarState}
+                avatarEmotion={effectiveAvatarEmotion}
+                onAvatarClick={handleAvatarClick}
               />
             )}
           </div>

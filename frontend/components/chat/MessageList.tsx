@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/tooltip";
 import { StreamingTypewriter } from "@/components/ui/typewriter-effect";
 import ShinyText from "@/components/ui/ShinyText";
+import { AIAvatar } from "./AIAvatar";
 
 const LOADING_PHRASES = [
   "Finding products...",
@@ -61,6 +62,11 @@ type Props = {
   onAudioPlayEnd?: () => void;
   /** Read aloud: backend detects language and returns TTS; caller handles playback. */
   onReadAloud?: (text: string) => Promise<void>;
+  /** Avatar state and emotion for display next to assistant messages */
+  avatarState?: "idle" | "thinking" | "speaking";
+  avatarEmotion?: "neutral" | "happy" | "excited" | "sad" | "confused" | "surprised" | "love" | "annoyed" | "angry" | "sleepy";
+  /** Called when user clicks avatar */
+  onAvatarClick?: () => void;
 };
 
 function ProductCardImage({ url, alt }: { url: string; alt: string }) {
@@ -250,7 +256,7 @@ function CheckIcon({ className }: { className?: string }) {
   );
 }
 
-export function MessageList({ messages, sending, expectsQdrantSearch = false, welcomeMessage, suggestedPrompts, onSuggestedPromptClick, onRegenerate, selectedProductIds, onProductSelect, voiceAudioRef, onAudioPlayStart, onAudioPlayEnd, onReadAloud }: Props) {
+export function MessageList({ messages, sending, expectsQdrantSearch = false, welcomeMessage, suggestedPrompts, onSuggestedPromptClick, onRegenerate, selectedProductIds, onProductSelect, voiceAudioRef, onAudioPlayStart, onAudioPlayEnd, onReadAloud, avatarState = "idle", avatarEmotion = "neutral", onAvatarClick }: Props) {
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [readAloudLoadingId, setReadAloudLoadingId] = useState<number | null>(null);
   const [typewriterCompleteIds, setTypewriterCompleteIds] = useState<Set<number>>(() => new Set());
@@ -315,6 +321,9 @@ export function MessageList({ messages, sending, expectsQdrantSearch = false, we
     const m = messages[idx];
     return m?.role === "assistant" && idx === lastMessageIndex && !sending;
   };
+  
+  // Find the last assistant message index for avatar display
+  const lastAssistantIndex = messages.findLastIndex(m => m.role === "assistant");
 
   return (
     <TooltipProvider delayDuration={300}>
@@ -328,7 +337,22 @@ export function MessageList({ messages, sending, expectsQdrantSearch = false, we
         )}
         {messages.length === 0 && welcomeMessage && !sending && (
           <div className="min-h-full flex flex-col justify-center py-8">
-            <div className="space-y-5 animate-fade-in">
+            <div className="space-y-5 animate-fade-in flex flex-col items-center text-center">
+              <div 
+                className="cursor-pointer transition-transform hover:scale-105 active:scale-95"
+                onClick={onAvatarClick}
+                role="button"
+                aria-label="AI Avatar"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    onAvatarClick?.();
+                  }
+                }}
+              >
+                <AIAvatar state={avatarState} emotion={avatarEmotion} size={100} className="mb-2" />
+              </div>
               <h2 dir="auto" className="text-lg font-semibold text-foreground leading-snug">
                 {welcomeMessage}
               </h2>
@@ -353,11 +377,33 @@ export function MessageList({ messages, sending, expectsQdrantSearch = false, we
             </div>
           </div>
         )}
-        {messages.map((m, idx) => (
+        {messages.map((m, idx) => {
+          // Show avatar only for last assistant message AND only when not currently sending
+          const isLastAssistantMsg = m.role === "assistant" && idx === lastAssistantIndex && !sending;
+          return (
           <div
             key={m.id}
-            className={`flex animate-fade-in flex-col ${m.role === "user" ? "items-end" : "items-start"}`}
+            className={`flex animate-fade-in ${m.role === "user" ? "flex-col items-end" : isLastAssistantMsg ? "flex-row items-start gap-3" : "flex-col items-start"}`}
           >
+            {/* Avatar for last assistant message (only when not sending) */}
+            {isLastAssistantMsg && (
+              <div 
+                className="shrink-0 mt-1 cursor-pointer transition-transform hover:scale-105 active:scale-95"
+                onClick={onAvatarClick}
+                role="button"
+                aria-label="AI Avatar"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    onAvatarClick?.();
+                  }
+                }}
+              >
+                <AIAvatar state={avatarState} emotion={avatarEmotion} size={56} className="shadow-modern" />
+              </div>
+            )}
+            <div className="flex flex-col items-start flex-1">
             <div
               className={`max-w-[85%] rounded-xl px-4 py-[5px] ${
                 m.role === "user"
@@ -520,23 +566,43 @@ export function MessageList({ messages, sending, expectsQdrantSearch = false, we
                 )}
               </div>
             )}
+            </div>
           </div>
-        ))}
+        );
+        })}
         {sending && (
-          <div className="flex flex-col items-start animate-fade-in">
-            <div className="max-w-[85%] rounded-xl px-4 py-1 bg-muted text-foreground border border-border/50">
-              <ShinyText
-                text={expectsQdrantSearch ? LOADING_PHRASES[loadingPhraseIndex] : "Thinking…"}
-                speed={1.2}
-                delay={0}
-                spread={100}
-                direction="left"
-                yoyo
-                pauseOnHover
-                color="var(--muted-foreground)"
-                shineColor="var(--foreground)"
-                className="text-sm"
-              />
+          <div className="flex flex-row items-start gap-3 animate-fade-in">
+            {/* Avatar while thinking */}
+            <div 
+              className="shrink-0 mt-1 cursor-pointer transition-transform hover:scale-105 active:scale-95"
+              onClick={onAvatarClick}
+              role="button"
+              aria-label="AI Avatar"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onAvatarClick?.();
+                }
+              }}
+            >
+              <AIAvatar state="thinking" emotion={avatarEmotion} size={56} className="shadow-modern" />
+            </div>
+            <div className="flex flex-col items-start flex-1">
+              <div className="max-w-[85%] rounded-xl px-4 py-1 bg-muted text-foreground border border-border/50">
+                <ShinyText
+                  text={expectsQdrantSearch ? LOADING_PHRASES[loadingPhraseIndex] : "Thinking…"}
+                  speed={1.2}
+                  delay={0}
+                  spread={100}
+                  direction="left"
+                  yoyo
+                  pauseOnHover
+                  color="var(--muted-foreground)"
+                  shineColor="var(--foreground)"
+                  className="text-sm"
+                />
+              </div>
             </div>
           </div>
         )}

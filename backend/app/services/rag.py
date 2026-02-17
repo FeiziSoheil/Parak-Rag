@@ -320,6 +320,62 @@ Rules:
     return {"needs_qdrant_search": len(message.strip()) > 15, "intent_type": "unknown", "confidence": 0.3}
 
 
+ALLOWED_EMOTIONS = frozenset({
+    "neutral", "happy", "excited", "sad", "confused", "surprised", "love", "worried",
+})
+
+
+def detect_emotion_with_llm(user_message: str | None, assistant_reply: str | None) -> str | None:
+    """
+    Use LLM to suggest an avatar emotion based on the user message and assistant reply.
+    Returns one of: neutral, happy, excited, sad, confused, surprised, love, worried.
+    Returns None on failure or invalid response. (annoyed/angry are frontend-only.)
+    """
+    if not user_message or not user_message.strip():
+        return "neutral"
+    if not OPENROUTER_API_KEY:
+        return None
+    prompt = f"""Based on this conversation, choose the assistant avatar's emotion.
+
+User message: "{user_message[:500]}"
+
+Assistant reply (excerpt): "{ (assistant_reply or "")[:300] }"
+
+Pick the most fitting emotion for the assistant's face:
+- neutral: default, no strong sentiment
+- happy: user thanked, praised, or expressed satisfaction (thanks, great, perfect, ممنون, عالی)
+- excited: user is enthusiastic or asking for recommendations
+- sad: user expressed disappointment, said answer was wrong or not helpful
+- confused: user question was ambiguous or the reply might not fully match
+- surprised: user asked something unusual or reacted with surprise
+- love: user expressed strong affection or "you're the best"
+- worried: user asked for help, urgent, or has a problem (help, urgent, مشکل, کمک)
+
+Respond with ONLY a JSON object: {{ "emotion": "one_word_from_above" }}
+Use lowercase. No other text."""
+
+    try:
+        llm = ChatOpenAI(
+            model=OPENROUTER_MODEL,
+            openai_api_key=OPENROUTER_API_KEY,
+            openai_api_base=OPENROUTER_BASE_URL,
+            temperature=0,
+            max_tokens=80,
+        )
+        response = llm.invoke([HumanMessage(content=prompt)])
+        content = response.content if hasattr(response, "content") else str(response)
+        json_str = _extract_first_json_object(content)
+        if not json_str:
+            return None
+        data = json.loads(json_str)
+        emotion = (data.get("emotion") or "").strip().lower()
+        if emotion in ALLOWED_EMOTIONS:
+            return emotion
+        return None
+    except Exception:
+        return None
+
+
 def detect_language_with_llm(text: str | None) -> str:
     """
     Use LLM to detect the language of the given text. Returns ISO 639-1 code (e.g. 'en', 'fa', 'ar', 'zh-cn').
@@ -357,6 +413,80 @@ Language code:"""
     except Exception:
         pass
     return "en"
+
+
+# Allowed avatar emotions (must match frontend AIAvatarEmotion)
+AVATAR_EMOTIONS = ("neutral", "happy", "excited", "sad", "confused", "surprised", "love", "annoyed", "angry")
+
+
+def detect_emotion_with_llm(user_message: str, assistant_message: str) -> str:
+    """
+    Use LLM to suggest avatar emotion from the last exchange.
+    Input: user message and assistant reply.
+    Returns one of: neutral, happy, excited, sad, confused, surprised, love, annoyed, angry.
+    Used so the avatar reacts intelligently (e.g. thankful user -> happy, frustrated -> sad/annoyed).
+    """
+    if not OPENROUTER_API_KEY:
+        return "neutral"
+    user = (user_message or "").strip()[:2000]
+    assistant = (assistant_message or "").strip()[:1500]
+    if not user:
+        return "neutral"
+
+    prompt = f"""You are an emotion classifier for a chat assistant's avatar. Given the user's message and the assistant's reply, choose the single most appropriate avatar emotion. You must output exactly ONE word from the list at the end.
+
+User message:
+{user}
+
+Assistant reply (first part):
+{assistant}
+
+--- DEFINITIONS (pick the best match) ---
+
+1) love — Use when the user expresses *personal affection or strong praise of the assistant itself* (not just "good answer"). Examples: "تو بهترینی", "عاشقتم", "دوستت دارم", "بهترین دستیاری", "you're the best", "I love you", "خیلی دوستت دارم", "ممنون که هستی", "بدون تو نمی‌تونستم". The focus is on the relationship or the assistant as a person. If the user only said "ممنون" or "عالی" without praising the assistant personally -> do NOT use love.
+
+2) happy — Use when the user expresses *simple gratitude or satisfaction with the answer/task* (thank you, good, perfect, it worked). Examples: "ممنون", "عالی", "مرسی", "خوب بود", "درست شد", "thanks", "great", "perfect", "helpful". No strong affection, no request for suggestions. Just "I'm satisfied with what you did". If they also praised the assistant as a person (best, love you) -> use love instead. If they are asking what to do next or for recommendations -> use excited instead.
+
+3) excited — Use when the user is *enthusiastic about doing something or actively asking for ideas/suggestions/recommendations*. Examples: "یه رستوران خوب پیشنهاد بده", "چی پیشنهاد می‌کنی؟", "می‌خوام برم سفر کجا برم؟", "recommend something", "what do you suggest?", "کدوم رو بخرم؟", "چند تا گزینه بده". The conversation is forward-looking: user wants options, ideas, or next steps. Do NOT use excited for simple "thanks" or "great" — use happy. Do NOT use excited for "you're the best" — use love.
+
+4) neutral — Normal factual question/answer, greeting, or no strong sentiment. "سلام", "امروز هوا چطوره", "چند تا دو دو تا می‌شه".
+
+5) sad — User said the answer was wrong, not helpful, or expressed disappointment. "جوابت اشتباه بود", "به درد من نخورد", "متاسفم ولی..."
+
+6) annoyed — User is frustrated or impatient with the assistant. "چرا جواب نمیدی", "دوباره اشتباه گفتی".
+
+7) angry — User is clearly angry or rude.
+
+8) confused — ONLY when the *question* is vague or ambiguous, or the assistant clearly didn't understand. "اون چیز رو بگو", "چطور می‌تونم؟" (no context). NOT for unusual or fun questions.
+
+9) surprised — When something *unexpected or unusual*: weird/fun question, user said "وای!" or "realmente?", or topic is funny. Unusual question -> surprised; vague question -> confused.
+
+--- PRIORITY when both could apply ---
+- "ممنون تو بهترینی" or thanks + personal praise -> love (not happy).
+- "عالی ممنون" or just thanks/satisfaction -> happy (not love, not excited).
+- "پیشنهاد بده" or "چی پیشنهاد می‌کنی" -> excited (not happy).
+- Simple thanks after a recommendation -> happy (not excited).
+
+Respond with ONLY one word from this exact list: neutral, happy, excited, sad, confused, surprised, love, annoyed, angry
+No explanation, no quotes, no other text."""
+
+    try:
+        llm = ChatOpenAI(
+            model=OPENROUTER_MODEL,
+            openai_api_key=OPENROUTER_API_KEY,
+            openai_api_base=OPENROUTER_BASE_URL,
+            temperature=0,
+            max_tokens=20,
+        )
+        response = llm.invoke([HumanMessage(content=prompt)])
+        content = (response.content if hasattr(response, "content") else str(response)).strip().lower()
+        # Take first token that is a valid emotion
+        for token in re.split(r"[\s,.\n]+", content):
+            if token in AVATAR_EMOTIONS:
+                return token
+    except Exception:
+        pass
+    return "neutral"
 
 
 def get_query_vector(text: str | None, image_bytes: bytes | None) -> list[float]:

@@ -444,7 +444,11 @@ export async function voiceDetectIntent(voiceFile: File): Promise<VoiceDetectInt
   return res.json();
 }
 
-export type SendChatResult = { message: string; products: ProductSummary[] };
+export type SendChatResult = {
+  message: string;
+  products: ProductSummary[];
+  suggested_emotion?: string;
+};
 
 export async function sendChat(
   sessionId: number,
@@ -474,6 +478,7 @@ export async function sendChat(
 export type SendVoiceChatResult = {
   message: string;
   products: ProductSummary[];
+  suggested_emotion?: string;
   /** متن ترنسکریب‌شده از صدای کاربر (STT) */
   transcribed_text: string;
   audio_base64?: string;
