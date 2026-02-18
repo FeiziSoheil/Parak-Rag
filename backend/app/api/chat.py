@@ -19,7 +19,7 @@ from app.core.database import get_db, SessionLocal
 from app.models.user import User
 from app.models.session import ChatSession
 from app.models.message import Message
-from app.schemas.chat import SessionResponse, MessageOut, MessageSearchResult
+from app.schemas.chat import SessionResponse, SessionUpdate, MessageOut, MessageSearchResult
 from app.services.memory import get_chat_history
 from app.services.rag import (
     run_embed_and_search,
@@ -388,7 +388,12 @@ def list_sessions(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    sessions = db.query(ChatSession).filter(ChatSession.user_id == current_user.id).order_by(ChatSession.updated_at.desc()).all()
+    sessions = (
+        db.query(ChatSession)
+        .filter(ChatSession.user_id == current_user.id)
+        .order_by(ChatSession.pinned.desc(), ChatSession.updated_at.desc())
+        .all()
+    )
     return sessions
 
 
@@ -400,6 +405,25 @@ def create_session(
 ):
     session = ChatSession(user_id=current_user.id, title=title)
     db.add(session)
+    db.commit()
+    db.refresh(session)
+    return session
+
+
+@router.patch("/sessions/{session_id}", response_model=SessionResponse)
+def update_session(
+    session_id: int,
+    body: SessionUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    session = db.query(ChatSession).filter(ChatSession.id == session_id, ChatSession.user_id == current_user.id).first()
+    if not session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    if body.title is not None:
+        session.title = body.title
+    if body.pinned is not None:
+        session.pinned = body.pinned
     db.commit()
     db.refresh(session)
     return session

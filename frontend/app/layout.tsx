@@ -3,6 +3,7 @@ import localFont from "next/font/local";
 import { DirectionProvider } from "@/components/DirectionProvider";
 import { Toaster } from "@/components/ui/sonner";
 import { ThemeProvider } from "next-themes";
+import { AccentThemeProvider } from "@/contexts/AccentThemeContext";
 import "./globals.css";
 
 const geistSans = localFont({
@@ -32,10 +33,12 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} font-sans antialiased min-h-screen bg-background text-foreground`}
       >
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
-          <DirectionProvider>
-            {children}
-            <Toaster position="bottom-right" richColors />
-          </DirectionProvider>
+          <AccentThemeProvider>
+            <DirectionProvider>
+              {children}
+              <Toaster position="bottom-right" richColors />
+            </DirectionProvider>
+          </AccentThemeProvider>
         </ThemeProvider>
       </body>
     </html>

@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
-import { Volume2 } from "lucide-react";
+import { Volume2, User } from "lucide-react";
 import type { ProductSummary } from "@/lib/api";
 import { getProductImageUrl } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -67,6 +67,8 @@ type Props = {
   avatarEmotion?: "neutral" | "happy" | "excited" | "sad" | "confused" | "surprised" | "love" | "annoyed" | "angry" | "sleepy";
   /** Called when user clicks avatar */
   onAvatarClick?: () => void;
+  /** Optional user avatar URL to show next to user messages */
+  userAvatarUrl?: string | null;
 };
 
 function ProductCardImage({ url, alt }: { url: string; alt: string }) {
@@ -228,6 +230,24 @@ function AssistantMessageContent({
 }
 
 
+/** Small avatar shown next to user messages: image if URL provided, else User icon. */
+function UserAvatar({ avatarUrl, size = 44 }: { avatarUrl?: string | null; size?: number }) {
+  const resolvedUrl = avatarUrl?.trim() ? avatarUrl : null;
+  return (
+    <div
+      className="shrink-0 rounded-full bg-primary/20 border border-border flex items-center justify-center overflow-hidden shadow-modern"
+      style={{ width: size, height: size }}
+      aria-label="You"
+    >
+      {resolvedUrl ? (
+        <img src={resolvedUrl} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+      ) : (
+        <User className="text-primary" style={{ width: size * 0.5, height: size * 0.5 }} strokeWidth={2} />
+      )}
+    </div>
+  );
+}
+
 function CopyIcon({ className }: { className?: string }) {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
@@ -256,13 +276,21 @@ function CheckIcon({ className }: { className?: string }) {
   );
 }
 
-export function MessageList({ messages, sending, expectsQdrantSearch = false, welcomeMessage, suggestedPrompts, onSuggestedPromptClick, onRegenerate, selectedProductIds, onProductSelect, voiceAudioRef, onAudioPlayStart, onAudioPlayEnd, onReadAloud, avatarState = "idle", avatarEmotion = "neutral", onAvatarClick }: Props) {
+export function MessageList({ messages, sending, expectsQdrantSearch = false, welcomeMessage, suggestedPrompts, onSuggestedPromptClick, onRegenerate, selectedProductIds, onProductSelect, voiceAudioRef, onAudioPlayStart, onAudioPlayEnd, onReadAloud, avatarState = "idle", avatarEmotion = "neutral", onAvatarClick, userAvatarUrl }: Props) {
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [readAloudLoadingId, setReadAloudLoadingId] = useState<number | null>(null);
   const [typewriterCompleteIds, setTypewriterCompleteIds] = useState<Set<number>>(() => new Set());
   const [loadingPhraseIndex, setLoadingPhraseIndex] = useState(0);
   const hadMessagesRef = useRef(false);
   const lastVoiceAudioRef = useRef<HTMLAudioElement | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+
+  // Auto-scroll to bottom when new messages arrive or sending state changes
+  useEffect(() => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages.length, sending]);
 
   useEffect(() => {
     if (!sending) {
@@ -380,10 +408,11 @@ export function MessageList({ messages, sending, expectsQdrantSearch = false, we
         {messages.map((m, idx) => {
           // Show avatar only for last assistant message AND only when not currently sending
           const isLastAssistantMsg = m.role === "assistant" && idx === lastAssistantIndex && !sending;
+          const isUserMsg = m.role === "user";
           return (
           <div
             key={m.id}
-            className={`flex animate-fade-in ${m.role === "user" ? "flex-col items-end" : isLastAssistantMsg ? "flex-row items-start gap-3" : "flex-col items-start"}`}
+            className={`flex animate-fade-in ${isUserMsg ? "flex-row items-end justify-end gap-3" : isLastAssistantMsg ? "flex-row items-start gap-3" : "flex-col items-start"}`}
           >
             {/* Avatar for last assistant message (only when not sending) */}
             {isLastAssistantMsg && (
@@ -403,9 +432,9 @@ export function MessageList({ messages, sending, expectsQdrantSearch = false, we
                 <AIAvatar state={avatarState} emotion={avatarEmotion} size={56} className="shadow-modern" />
               </div>
             )}
-            <div className="flex flex-col items-start flex-1">
+            <div className={`flex flex-col flex-1 ${isUserMsg ? "items-end" : "items-start"}`}>
             <div
-              className={`max-w-[85%] rounded-xl px-4 py-[5px] ${
+              className={`max-w-[85%] w-fit rounded-xl px-4 py-[5px] ${
                 m.role === "user"
                   ? "bg-primary text-primary-foreground"
                   : "bg-muted text-foreground border border-border/50"
@@ -484,7 +513,13 @@ export function MessageList({ messages, sending, expectsQdrantSearch = false, we
                       />
                     </div>
                   ) : m.content ? (
-                    <p dir="auto" className="message-content text-sm whitespace-pre-wrap leading-relaxed">{m.content}</p>
+                    <p dir="auto" className="message-content text-sm leading-relaxed whitespace-pre-line">
+                      {m.content
+                        .split(/\n\n+/)
+                        .map((para) => para.replace(/\n/g, " ").trim())
+                        .filter(Boolean)
+                        .join("\n")}
+                    </p>
                   ) : m.attachedProducts?.length ? (
                     <p className="text-sm text-primary-foreground/80 italic">Question about attached product(s)</p>
                   ) : null}
@@ -567,6 +602,10 @@ export function MessageList({ messages, sending, expectsQdrantSearch = false, we
               </div>
             )}
             </div>
+            {/* User avatar next to user messages */}
+            {isUserMsg && (
+              <UserAvatar avatarUrl={userAvatarUrl} size={44} />
+            )}
           </div>
         );
         })}
@@ -606,6 +645,8 @@ export function MessageList({ messages, sending, expectsQdrantSearch = false, we
             </div>
           </div>
         )}
+        {/* Scroll anchor for auto-scroll to bottom */}
+        <div ref={messagesEndRef} />
       </div>
     </TooltipProvider>
   );

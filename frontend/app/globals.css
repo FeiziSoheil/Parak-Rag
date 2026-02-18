@@ -2,41 +2,41 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
+/* Light theme (default and when user selects Light) */
+:root,
+.light {
   --background: #fafafa;
-  --foreground: #0f0f0f;
+  --foreground: #0a0a0a;
   --card: #ffffff;
-  --card-foreground: #0f0f0f;
+  --card-foreground: #0a0a0a;
   --popover: #ffffff;
-  --popover-foreground: #0f0f0f;
+  --popover-foreground: #0a0a0a;
   --radius: 0.5rem;
-  
-  /* Single subtle accent - neutral blue-gray */
+
   --primary: #52525b;
   --primary-foreground: #fafafa;
-  --primary-glow: rgba(82, 82, 91, 0.08);
-  
+  --primary-glow: rgba(82, 82, 91, 0.1);
+
   --muted: #f4f4f5;
   --muted-foreground: #71717a;
   --border: #e4e4e7;
   --ring: #52525b;
-  
+
   --accent: #52525b;
-  --accent-glow: rgba(82, 82, 91, 0.08);
+  --accent-glow: rgba(82, 82, 91, 0.1);
   --destructive: #dc2626;
   --destructive-foreground: #ffffff;
 
-  /* Buttons: light white tint */
   --button: #f5f5f5;
-  --button-foreground: #0f0f0f;
-  --button-hover: #ebebeb;
-  --button-border: #e8e8e8;
-  
+  --button-foreground: #0a0a0a;
+  --button-hover: #e5e5e5;
+  --button-border: #e5e5e5;
+
   --gradient-1: #52525b;
   --gradient-2: #52525b;
   --gradient-3: #52525b;
 
-  /* Sidebar (shadcn) */
+  /* Sidebar - light */
   --sidebar-background: 0 0% 98%;
   --sidebar-foreground: 240 5.3% 26.1%;
   --sidebar-primary: 240 5.9% 10%;
@@ -45,10 +45,15 @@
   --sidebar-accent-foreground: 240 5.9% 10%;
   --sidebar-border: 220 13% 91%;
   --sidebar-ring: 217.2 91.2% 59.8%;
+
+  /* Inputs - light */
+  --input: 0 0% 96%;
+  --input-foreground: 240 5.9% 10%;
 }
 
+/* Only apply system dark when user has not explicitly chosen light (next-themes sets .light on html) */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not(.light) {
     --background: #09090b;
     --foreground: #fafafa;
     --card: #18181b;
@@ -71,7 +76,6 @@
     --destructive: #ef4444;
     --destructive-foreground: #18181b;
 
-    /* Buttons: light white tint (dark theme) */
     --button: #d4d4d8;
     --button-foreground: #18181b;
     --button-hover: #e4e4e7;
@@ -81,7 +85,6 @@
     --gradient-2: #a1a1aa;
     --gradient-3: #a1a1aa;
 
-    /* Sidebar (shadcn) - dark */
     --sidebar-background: 240 5.9% 10%;
     --sidebar-foreground: 240 4.8% 95.9%;
     --sidebar-primary: 224.3 76.3% 48%;
@@ -91,6 +94,137 @@
     --sidebar-border: 240 3.7% 15.9%;
     --sidebar-ring: 217.2 91.2% 59.8%;
   }
+}
+
+/* Dark theme when user selects dark (next-themes adds .dark to html) */
+.dark {
+  --background: #09090b;
+  --foreground: #fafafa;
+  --card: #18181b;
+  --card-foreground: #fafafa;
+  --popover: #18181b;
+  --popover-foreground: #fafafa;
+  --radius: 0.5rem;
+  --primary: #a1a1aa;
+  --primary-foreground: #18181b;
+  --primary-glow: rgba(161, 161, 170, 0.12);
+  --muted: #27272a;
+  --muted-foreground: #a1a1aa;
+  --border: #27272a;
+  --ring: #a1a1aa;
+  --accent: #a1a1aa;
+  --accent-glow: rgba(161, 161, 170, 0.12);
+  --destructive: #ef4444;
+  --destructive-foreground: #18181b;
+  --button: #d4d4d8;
+  --button-foreground: #18181b;
+  --button-hover: #e4e4e7;
+  --button-border: #3f3f46;
+  --gradient-1: #a1a1aa;
+  --gradient-2: #a1a1aa;
+  --gradient-3: #a1a1aa;
+  --sidebar-background: 240 5.9% 10%;
+  --sidebar-foreground: 240 4.8% 95.9%;
+  --sidebar-primary: 224.3 76.3% 48%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 240 3.7% 15.9%;
+  --sidebar-accent-foreground: 240 4.8% 95.9%;
+  --sidebar-border: 240 3.7% 15.9%;
+  --sidebar-ring: 217.2 91.2% 59.8%;
+  --input: 240 3.7% 15.9%;
+  --input-foreground: 240 4.8% 95.9%;
+}
+
+/* Multi-accent themes (light) */
+[data-accent="blue"] {
+  --primary: #2563eb;
+  --primary-glow: rgba(37, 99, 235, 0.12);
+  --ring: #2563eb;
+  --accent: #2563eb;
+  --accent-glow: rgba(37, 99, 235, 0.12);
+  --gradient-1: #2563eb;
+  --gradient-2: #3b82f6;
+  --gradient-3: #60a5fa;
+  --sidebar-primary: 221.2 83.2% 53.3%;
+  --sidebar-ring: 221.2 83.2% 53.3%;
+}
+[data-accent="rose"] {
+  --primary: #e11d48;
+  --primary-glow: rgba(225, 29, 72, 0.12);
+  --ring: #e11d48;
+  --accent: #e11d48;
+  --accent-glow: rgba(225, 29, 72, 0.12);
+  --gradient-1: #e11d48;
+  --gradient-2: #f43f5e;
+  --gradient-3: #fb7185;
+  --sidebar-primary: 346.8 77.2% 49.8%;
+  --sidebar-ring: 346.8 77.2% 49.8%;
+}
+[data-accent="emerald"] {
+  --primary: #059669;
+  --primary-glow: rgba(5, 150, 105, 0.12);
+  --ring: #059669;
+  --accent: #059669;
+  --accent-glow: rgba(5, 150, 105, 0.12);
+  --gradient-1: #059669;
+  --gradient-2: #10b981;
+  --gradient-3: #34d399;
+  --sidebar-primary: 160 84.1% 39.4%;
+  --sidebar-ring: 160 84.1% 39.4%;
+}
+[data-accent="violet"] {
+  --primary: #7c3aed;
+  --primary-glow: rgba(124, 58, 237, 0.12);
+  --ring: #7c3aed;
+  --accent: #7c3aed;
+  --accent-glow: rgba(124, 58, 237, 0.12);
+  --gradient-1: #7c3aed;
+  --gradient-2: #8b5cf6;
+  --gradient-3: #a78bfa;
+  --sidebar-primary: 262.1 83.3% 57.8%;
+  --sidebar-ring: 262.1 83.3% 57.8%;
+}
+
+/* Multi-accent themes (dark) */
+.dark[data-accent="blue"] {
+  --primary: #3b82f6;
+  --primary-glow: rgba(59, 130, 246, 0.2);
+  --ring: #3b82f6;
+  --accent: #3b82f6;
+  --accent-glow: rgba(59, 130, 246, 0.2);
+  --gradient-1: #3b82f6;
+  --gradient-2: #60a5fa;
+  --gradient-3: #93c5fd;
+}
+.dark[data-accent="rose"] {
+  --primary: #fb7185;
+  --primary-glow: rgba(251, 113, 133, 0.2);
+  --ring: #fb7185;
+  --accent: #fb7185;
+  --accent-glow: rgba(251, 113, 133, 0.2);
+  --gradient-1: #f43f5e;
+  --gradient-2: #fb7185;
+  --gradient-3: #fda4af;
+}
+.dark[data-accent="emerald"] {
+  --primary: #34d399;
+  --primary-glow: rgba(52, 211, 153, 0.2);
+  --ring: #34d399;
+  --accent: #34d399;
+  --accent-glow: rgba(52, 211, 153, 0.2);
+  --gradient-1: #10b981;
+  --gradient-2: #34d399;
+  --gradient-3: #6ee7b7;
+}
+.dark[data-accent="violet"] {
+  --primary: #8b5cf6;
+  --primary-glow: rgba(139, 92, 246, 0.2);
+  --ring: #8b5cf6;
+  --accent: #8b5cf6;
+  --accent-glow: rgba(139, 92, 246, 0.2);
+  --gradient-1: #7c3aed;
+  --gradient-2: #8b5cf6;
+  --gradient-3: #a78bfa;
 }
 
 * {

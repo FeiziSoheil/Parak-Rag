@@ -206,7 +206,9 @@ export async function getWelcome(type: "dashboard" | "new_chat"): Promise<{ text
   return res.json();
 }
 
-export async function listSessions(): Promise<{ id: number; title: string; created_at: string }[]> {
+export type SessionListItem = { id: number; title: string; created_at: string; pinned?: boolean };
+
+export async function listSessions(): Promise<SessionListItem[]> {
   const token = getToken();
   if (!token) throw new Error("Not authenticated");
   const res = await fetch(`${API_BASE}/api/sessions`, {
@@ -216,7 +218,7 @@ export async function listSessions(): Promise<{ id: number; title: string; creat
   return res.json();
 }
 
-export async function createSession(title?: string): Promise<{ id: number; title: string; created_at: string }> {
+export async function createSession(title?: string): Promise<SessionListItem> {
   const token = getToken();
   if (!token) throw new Error("Not authenticated");
   const res = await fetch(`${API_BASE}/api/sessions`, {
@@ -225,6 +227,18 @@ export async function createSession(title?: string): Promise<{ id: number; title
     body: new URLSearchParams({ title: title || "New Chat" }),
   });
   if (!res.ok) throw new Error("Failed to create session");
+  return res.json();
+}
+
+export async function updateSession(sessionId: number, data: { title?: string; pinned?: boolean }): Promise<SessionListItem> {
+  const token = getToken();
+  if (!token) throw new Error("Not authenticated");
+  const res = await fetch(`${API_BASE}/api/sessions/${sessionId}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error("Failed to update session");
   return res.json();
 }
 

@@ -15,10 +15,81 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
 import Link from "next/link";
+import { useTheme } from "next-themes";
+import { useAccentTheme } from "@/contexts/AccentThemeContext";
+import { Sun, Moon, Monitor } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 const RAG_TOP_K_KEY = "rag_top_k";
 const INGEST_LIMIT_KEY = "ingest_limit";
+
+const MODE_OPTIONS = [
+  { value: "light", label: "Light", icon: Sun },
+  { value: "dark", label: "Dark", icon: Moon },
+  { value: "system", label: "System", icon: Monitor },
+] as const;
+
+function ThemeOptions() {
+  const { theme, setTheme } = useTheme();
+  const { accent, setAccent, options: accentOptions } = useAccentTheme();
+  return (
+    <div className="space-y-4">
+      <div className="space-y-2">
+        <Label className="text-sm font-medium">Mode</Label>
+        <div className="flex flex-wrap gap-2">
+          {MODE_OPTIONS.map(({ value, label, icon: Icon }) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setTheme(value)}
+              className={cn(
+                "inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm transition-colors",
+                (theme ?? "system") === value
+                  ? "border-primary bg-primary/10 text-foreground"
+                  : "border-border bg-background hover:bg-muted"
+              )}
+            >
+              <Icon className="h-4 w-4" />
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="space-y-2">
+        <Label className="text-sm font-medium">Accent</Label>
+        <div className="flex flex-wrap gap-2">
+          {accentOptions.map(({ value, label }) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setAccent(value)}
+              className={cn(
+                "inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm transition-colors",
+                accent === value
+                  ? "border-primary bg-primary/10 text-foreground"
+                  : "border-border bg-background hover:bg-muted"
+              )}
+            >
+              <span
+                className={cn(
+                  "size-3 rounded-full border border-border shrink-0",
+                  value === "zinc" && "bg-zinc-500",
+                  value === "blue" && "bg-blue-500",
+                  value === "rose" && "bg-rose-500",
+                  value === "emerald" && "bg-emerald-500",
+                  value === "violet" && "bg-violet-500"
+                )}
+              />
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -207,6 +278,18 @@ export default function SettingsPage() {
         </header>
         <main className="flex-1 p-6 max-w-xl mx-auto w-full">
           <div className="space-y-5">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Appearance</CardTitle>
+                <p className="text-sm text-muted-foreground font-normal mt-0.5">
+                  Mode and accent color.
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-4 pt-0">
+                <ThemeOptions />
+              </CardContent>
+            </Card>
+
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-base">RAG Top K</CardTitle>

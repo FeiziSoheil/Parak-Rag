@@ -10,10 +10,16 @@ class SessionCreate(BaseModel):
 class SessionResponse(BaseModel):
     id: int
     title: str
+    pinned: bool = False
     created_at: datetime
 
     class Config:
         from_attributes = True
+
+
+class SessionUpdate(BaseModel):
+    title: str | None = None
+    pinned: bool | None = None
 
 
 class MessageIn(BaseModel):

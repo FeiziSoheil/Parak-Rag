@@ -8,7 +8,7 @@ import { MessageInput, type MessageInputHandle } from "./MessageInput";
 import { ProductSidebar } from "./ProductSidebar";
 import type { AIAvatarState, AIAvatarEmotion } from "./AIAvatar";
 import { Skeleton } from "@/components/ui/skeleton";
-import { getCurrentUser, getSessionMessages, sendChat, sendVoiceChat, readAloud, detectIntent, voiceDetectIntent, type ProductSummary, type UserProfile } from "@/lib/api";
+import { getCurrentUser, getSessionMessages, sendChat, sendVoiceChat, readAloud, detectIntent, voiceDetectIntent, getAvatarUrl, type ProductSummary, type UserProfile } from "@/lib/api";
 
 function getDisplayName(user: UserProfile | null): string {
   if (!user) return "";
@@ -589,6 +589,7 @@ export function ChatPanel({ sessionId }: Props) {
                 avatarState={avatarState}
                 avatarEmotion={effectiveAvatarEmotion}
                 onAvatarClick={handleAvatarClick}
+                userAvatarUrl={user?.avatar_url ? getAvatarUrl(user.avatar_url) : null}
               />
             )}
           </div>

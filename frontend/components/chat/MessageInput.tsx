@@ -319,10 +319,10 @@ const MessageInputInner = forwardRef<MessageInputHandle, Props>(function Message
   }
 
   return (
-    <div className="sticky bottom-0 left-0 right-0 p-3 sm:p-4 flex justify-center bg-background shadow-[0_-4px_12px_-2px_rgba(0,0,0,0.08)] dark:shadow-[0_-4px_12px_-2px_rgba(0,0,0,0.25)]">
+    <div className="sticky bottom-0 left-0 right-0 p-3 sm:p-4 flex justify-center bg-background shadow-none">
       <form
         onSubmit={handleSubmit}
-        className="w-full max-w-[min(100%,28rem)] focus-within:max-w-[min(100%,42rem)] bg-background/95 dark:bg-background/90 backdrop-blur-sm shadow-lg shadow-black/5 p-3 sm:p-4 transition-[max-width] duration-300 ease-out focus-within:shadow-xl focus-within:shadow-black/10"
+        className="w-full max-w-[min(100%,28rem)] focus-within:max-w-[min(100%,42rem)] bg-background/95 dark:bg-background/90 backdrop-blur-sm shadow-none p-3 sm:p-4 transition-[max-width] duration-300 ease-out"
       >
         {(attachedProducts.length > 0 || imageFile) && (
           <div className="mb-3 flex flex-wrap items-center gap-2 animate-slide-down">
