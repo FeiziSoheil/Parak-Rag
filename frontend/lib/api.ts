@@ -109,24 +109,13 @@ export async function confirmEmailChange(token: string): Promise<{ message: stri
   return res.json();
 }
 
-export async function requestPasswordChange(): Promise<{ message: string }> {
+export async function changePassword(current_password: string, new_password: string): Promise<{ message: string }> {
   const token = getToken();
   if (!token) throw new Error("Not authenticated");
-  const res = await fetch(`${API_BASE}/api/auth/request-password-change`, { method: "POST", headers: { Authorization: `Bearer ${token}` } });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error((err as { detail?: string }).detail || "Failed");
-  }
-  return res.json();
-}
-
-export async function confirmPasswordChange(code: string, new_password: string): Promise<{ message: string }> {
-  const token = getToken();
-  if (!token) throw new Error("Not authenticated");
-  const res = await fetch(`${API_BASE}/api/auth/confirm-password-change`, {
+  const res = await fetch(`${API_BASE}/api/auth/change-password`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ code, new_password }),
+    body: JSON.stringify({ current_password, new_password }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -157,41 +146,6 @@ export async function register(username: string, email: string, password: string
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error((err as { detail?: string }).detail || "Registration failed");
-  }
-  return res.json();
-}
-
-export async function verifyEmail(token: string): Promise<{ message: string }> {
-  const res = await fetch(`${API_BASE}/api/auth/verify-email?token=${encodeURIComponent(token)}`);
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error((err as { detail?: string }).detail || "Verification failed");
-  }
-  return res.json();
-}
-
-export async function verifyEmailByCode(email: string, code: string): Promise<{ message: string }> {
-  const res = await fetch(`${API_BASE}/api/auth/verify-email-by-code`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, code }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error((err as { detail?: string }).detail || "Verification failed");
-  }
-  return res.json();
-}
-
-export async function resendVerificationEmail(email: string): Promise<{ message: string }> {
-  const res = await fetch(`${API_BASE}/api/auth/resend-verification`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error((err as { detail?: string }).detail || "Failed to resend");
   }
   return res.json();
 }

@@ -22,7 +22,8 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
 # OpenRouter
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-4o")  # use gpt-oss-120b when available
+# Free tier: https://openrouter.ai/collections/free-models
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-oss-120b:free")
 
 # Proxy for image download (ingestion) — اگر با VPN/پراکسی به اینترنت وصل می‌شوید، این آدرس را تنظیم کنید
 # مثال: http://127.0.0.1:10808 برای Psiphon یا V2Ray وقتی Local mixed روی 10808 است
@@ -62,11 +63,6 @@ BASE_URL = os.getenv("BASE_URL", "http://localhost:3000")  # App URL for verific
 # Email verification token expiry (minutes)
 VERIFICATION_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
 
-# Verification code (numeric code sent in email)
-VERIFICATION_CODE_LENGTH = 6
-VERIFICATION_CODE_EXPIRE_MINUTES = 2  # 2 minutes
-VERIFICATION_CODE_MAX_REQUESTS = 3  # max times user can request code (register + resends)
-VERIFICATION_CODE_LOCK_MINUTES = 60 * 2  # 2 hours lock after max requests
 
 # Avatar uploads (relative to backend)
 AVATAR_UPLOAD_DIR = BASE_DIR / "uploads" / "avatars"

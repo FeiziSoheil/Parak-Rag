@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -34,28 +35,16 @@ def _ensure_user_email_columns():
         if "email_verified" not in cols:
             conn.execute(text("ALTER TABLE users ADD COLUMN email_verified BOOLEAN DEFAULT 0"))
             conn.commit()
-        if "verification_code" not in cols:
-            conn.execute(text("ALTER TABLE users ADD COLUMN verification_code VARCHAR(10)"))
-            conn.commit()
-        if "verification_code_expires" not in cols:
-            conn.execute(text("ALTER TABLE users ADD COLUMN verification_code_expires DATETIME"))
-            conn.commit()
-        if "verification_code_request_count" not in cols:
-            conn.execute(text("ALTER TABLE users ADD COLUMN verification_code_request_count INTEGER DEFAULT 0"))
-            conn.commit()
-        if "verification_code_locked_until" not in cols:
-            conn.execute(text("ALTER TABLE users ADD COLUMN verification_code_locked_until DATETIME"))
-            conn.commit()
         for col, spec in [
             ("first_name", "VARCHAR(255)"),
             ("last_name", "VARCHAR(255)"),
             ("avatar_url", "VARCHAR(512)"),
-            ("password_change_code", "VARCHAR(10)"),
-            ("password_change_code_expires", "DATETIME"),
         ]:
             if col not in cols:
                 conn.execute(text(f"ALTER TABLE users ADD COLUMN {col} {spec}"))
                 conn.commit()
+        conn.execute(text("UPDATE users SET email_verified = 1 WHERE email_verified = 0 OR email_verified IS NULL"))
+        conn.commit()
 
 
 @asynccontextmanager
@@ -86,24 +75,36 @@ async def lifespan(app: FastAPI):
     VOICE_TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
     # Preload embedder at startup if possible; do not block startup on failure (e.g. network timeout to Hugging Face)
+    offline_mode = os.environ.get("HF_HUB_OFFLINE", "0") == "1"
     try:
         loop = asyncio.get_event_loop()
+        if offline_mode:
+            logger.info("Offline mode enabled; attempting to load cached CLIP model...")
+        else:
+            logger.info("Online mode; attempting to preload CLIP model from HuggingFace...")
         await loop.run_in_executor(None, get_embedder)
+        logger.info("✓ CLIP embedder preloaded successfully")
     except Exception as e:
-        logger.warning(
-            "Embedder preload failed (app will start; model will load on first use or fail then). Error: %s",
-            e,
-        )
+        if offline_mode:
+            logger.error(
+                "CLIP preload failed in offline mode (cached model not available). Error: %s",
+                e,
+            )
+        else:
+            logger.warning(
+                "CLIP preload failed (app will start; model will load on first use). Error: %s",
+                e,
+            )
 
     # Preload Whisper (STT) so first voice-chat request doesn't timeout while model downloads
     try:
         from app.services.stt import get_whisper_model
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, get_whisper_model)
-        logger.info("Whisper model preloaded for voice chat")
+        logger.info("✓ Whisper model preloaded successfully for voice chat")
     except Exception as e:
         logger.warning(
-            "Whisper preload failed (app will start; model will load on first voice use or fail then). Error: %s",
+            "Whisper preload failed (app will start; model will load on first voice use). Error: %s",
             e,
         )
 

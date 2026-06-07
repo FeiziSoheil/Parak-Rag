@@ -12,20 +12,13 @@ import {
   touchAvatarUpdated,
   requestEmailChange,
   confirmEmailChange,
-  requestPasswordChange,
-  confirmPasswordChange,
+  changePassword,
   type UserProfile,
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  InputOTP,
-  InputOTPGroup,
-  InputOTPSeparator,
-  InputOTPSlot,
-} from "@/components/ui/input-otp";
 import Link from "next/link";
 
 export default function ProfilePage() {
@@ -41,8 +34,8 @@ export default function ProfilePage() {
   const [emailChangeLoading, setEmailChangeLoading] = useState(false);
   const [emailChangeSent, setEmailChangeSent] = useState(false);
   const [confirmEmailMsg, setConfirmEmailMsg] = useState<string | null>(null);
-  const [passwordStep, setPasswordStep] = useState<"idle" | "requested" | "done">("idle");
-  const [passwordCode, setPasswordCode] = useState("");
+  const [passwordOpen, setPasswordOpen] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [passwordMsg, setPasswordMsg] = useState<string | null>(null);
@@ -135,33 +128,19 @@ export default function ProfilePage() {
     }
   }
 
-  async function handleRequestPasswordChange() {
-    setPasswordMsg(null);
-    setPasswordStep("idle");
-    try {
-      await requestPasswordChange();
-      setPasswordStep("requested");
-      toast.success("Check your email for the code");
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Failed";
-      setPasswordMsg(msg);
-      toast.error(msg);
-    }
-  }
-
-  async function handleConfirmPasswordChange(e: React.FormEvent) {
+  async function handleChangePassword(e: React.FormEvent) {
     e.preventDefault();
     setPasswordMsg(null);
     setPasswordLoading(true);
     try {
-      await confirmPasswordChange(passwordCode, newPassword);
-      setPasswordStep("done");
-      setPasswordCode("");
+      await changePassword(currentPassword, newPassword);
+      setCurrentPassword("");
       setNewPassword("");
+      setPasswordOpen(false);
       setPasswordMsg("Password updated.");
       toast.success("Password updated");
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Invalid or expired code.";
+      const msg = e instanceof Error ? e.message : "Failed to update password.";
       setPasswordMsg(msg);
       toast.error(msg);
     } finally {
@@ -294,50 +273,53 @@ export default function ProfilePage() {
 
                 <div className="space-y-3 pt-2 border-t border-border">
                   <Label className="block">Password</Label>
-                  {passwordStep === "idle" && (
-                    <Button size="sm" variant="outline" onClick={handleRequestPasswordChange}>
+                  {!passwordOpen ? (
+                    <Button size="sm" variant="outline" onClick={() => setPasswordOpen(true)}>
                       Change password
                     </Button>
-                  )}
-                  {passwordStep === "requested" && (
-                    <form onSubmit={handleConfirmPasswordChange} className="space-y-2">
-                      <p className="text-sm text-muted-foreground">Enter the code we sent to your email and your new password.</p>
-                      <div className="flex flex-col gap-2">
-                        <InputOTP maxLength={6} value={passwordCode} onChange={setPasswordCode}>
-                          <InputOTPGroup>
-                            <InputOTPSlot index={0} />
-                            <InputOTPSlot index={1} />
-                          </InputOTPGroup>
-                          <InputOTPSeparator />
-                          <InputOTPGroup>
-                            <InputOTPSlot index={2} />
-                            <InputOTPSlot index={3} />
-                          </InputOTPGroup>
-                          <InputOTPSeparator />
-                          <InputOTPGroup>
-                            <InputOTPSlot index={4} />
-                            <InputOTPSlot index={5} />
-                          </InputOTPGroup>
-                        </InputOTP>
-                        <Input
-                          type="password"
-                          placeholder="New password"
-                          value={newPassword}
-                          onChange={(e) => setNewPassword(e.target.value)}
-                          className="h-9"
-                          required
-                          minLength={6}
-                        />
-                        <Button type="submit" size="sm" disabled={passwordLoading || passwordCode.length < 6 || newPassword.length < 6}>
+                  ) : (
+                    <form onSubmit={handleChangePassword} className="space-y-2 max-w-sm">
+                      <Input
+                        type="password"
+                        placeholder="Current password"
+                        value={currentPassword}
+                        onChange={(e) => setCurrentPassword(e.target.value)}
+                        className="h-9"
+                        required
+                        autoComplete="current-password"
+                      />
+                      <Input
+                        type="password"
+                        placeholder="New password"
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        className="h-9"
+                        required
+                        minLength={6}
+                        autoComplete="new-password"
+                      />
+                      <div className="flex gap-2">
+                        <Button
+                          type="submit"
+                          size="sm"
+                          disabled={passwordLoading || !currentPassword || newPassword.length < 6}
+                        >
                           {passwordLoading ? "Updating…" : "Update password"}
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setPasswordOpen(false);
+                            setCurrentPassword("");
+                            setNewPassword("");
+                          }}
+                        >
+                          Cancel
                         </Button>
                       </div>
                     </form>
-                  )}
-                  {passwordStep === "done" && (
-                    <Button size="sm" variant="outline" className="mt-1" onClick={() => setPasswordStep("idle")}>
-                      Change password again
-                    </Button>
                   )}
                   {passwordMsg && <p className="text-sm text-muted-foreground">{passwordMsg}</p>}
                 </div>

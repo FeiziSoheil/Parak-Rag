@@ -5,6 +5,7 @@ import io
 import logging
 import os
 import time
+import urllib3
 from typing import List
 
 import requests
@@ -13,17 +14,22 @@ import torch
 from PIL import Image
 from transformers import CLIPModel, CLIPProcessor
 
+# Suppress SSL warnings if verify is disabled
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 logger = logging.getLogger(__name__)
 
 # Same as old RAG: 512-dim, text + image
 CLIP_MODEL_ID = "openai/clip-vit-base-patch32"
 CLIP_VECTOR_SIZE = 512
 
-# Longer timeout for slow networks (HuggingFace download); 10 minutes
-HF_DOWNLOAD_TIMEOUT_SEC = 600
+# Longer timeout for slow networks (HuggingFace download); 15 minutes
+HF_DOWNLOAD_TIMEOUT_SEC = 900
 # Retries for HuggingFace download (connection often drops on first try)
-HF_LOAD_RETRIES = 3
-HF_LOAD_RETRY_DELAY_SEC = 5
+HF_LOAD_RETRIES = 5
+HF_LOAD_RETRY_DELAY_SEC = 3
+# Exponential backoff multiplier
+HF_LOAD_RETRY_BACKOFF = 1.5
 # If set to "1", no Hub requests (avoids Thread-auto_conversion timeout after load). Use when model is already cached.
 # Example: set HF_HUB_OFFLINE=1 in env before starting the server to suppress the auto_conversion exception.
 
@@ -34,20 +40,29 @@ _device = None
 
 
 def _load_with_retry(load_fn, name: str):
-    """Call load_fn() with retries on OSError/RuntimeError (e.g. connection closed)."""
+    """Call load_fn() with retries on OSError/RuntimeError (e.g. connection closed).
+    Uses exponential backoff to handle transient network failures."""
     last_err = None
+    retry_delay = HF_LOAD_RETRY_DELAY_SEC
+    
     for attempt in range(1, HF_LOAD_RETRIES + 1):
         try:
+            logger.info("Loading %s (attempt %d/%d)...", name, attempt, HF_LOAD_RETRIES)
             return load_fn()
-        except (OSError, RuntimeError) as e:
+        except (OSError, RuntimeError, requests.exceptions.RequestException, urllib3.exceptions.HTTPError) as e:
             last_err = e
             if attempt < HF_LOAD_RETRIES:
                 logger.warning(
-                    "HuggingFace load %s failed (attempt %d/%d): %s. Retrying in %ds...",
-                    name, attempt, HF_LOAD_RETRIES, e, HF_LOAD_RETRY_DELAY_SEC,
+                    "HuggingFace load %s failed (attempt %d/%d): %s. Retrying in %.1fs...",
+                    name, attempt, HF_LOAD_RETRIES, str(e)[:100], retry_delay,
                 )
-                time.sleep(HF_LOAD_RETRY_DELAY_SEC)
+                time.sleep(retry_delay)
+                retry_delay *= HF_LOAD_RETRY_BACKOFF  # Exponential backoff
             else:
+                logger.error(
+                    "HuggingFace load %s failed after %d attempts. Last error: %s",
+                    name, HF_LOAD_RETRIES, e,
+                )
                 raise
     raise last_err
 
@@ -58,14 +73,28 @@ def get_embedder():
     if _model is None or _processor is None:
         try:
             # Avoid read timeout on slow connections (HuggingFace default is 10s)
-            os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", str(HF_DOWNLOAD_TIMEOUT_SEC))
-            logger.info("Loading CLIP model (%s)...", CLIP_MODEL_ID)
+            hf_timeout = os.environ.get("HF_HUB_DOWNLOAD_TIMEOUT", str(HF_DOWNLOAD_TIMEOUT_SEC))
+            os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", hf_timeout)
+            
+            # Check if offline mode is enabled
+            offline_mode = os.environ.get("HF_HUB_OFFLINE", "0") == "1"
+            if offline_mode:
+                logger.info("HuggingFace offline mode enabled; will use cached models only")
+                os.environ["HF_HUB_OFFLINE"] = "1"
+            
+            logger.info("Loading CLIP model (%s) with timeout=%s...", CLIP_MODEL_ID, hf_timeout)
             _model = _load_with_retry(
-                lambda: CLIPModel.from_pretrained(CLIP_MODEL_ID),
+                lambda: CLIPModel.from_pretrained(
+                    CLIP_MODEL_ID,
+                    local_files_only=offline_mode,
+                ),
                 "CLIPModel",
             )
             _processor = _load_with_retry(
-                lambda: CLIPProcessor.from_pretrained(CLIP_MODEL_ID),
+                lambda: CLIPProcessor.from_pretrained(
+                    CLIP_MODEL_ID,
+                    local_files_only=offline_mode,
+                ),
                 "CLIPProcessor",
             )
             _device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -73,7 +102,7 @@ def get_embedder():
                 logger.info("GPU detected: %s", torch.cuda.get_device_name(0))
                 _model = _model.to(_device)
             _model.eval()
-            logger.info("CLIP model loaded: %s (text + image)", CLIP_MODEL_ID)
+            logger.info("CLIP model loaded successfully: %s (text + image)", CLIP_MODEL_ID)
         except Exception as e:
             _model = None
             _processor = None
@@ -142,18 +171,11 @@ def embed_texts(texts: List[str]) -> List[List[float]]:
 
 
 def _get_image_request_proxies():
-    """پراکسی برای دانلود تصویر: اول IMAGE_FETCH_PROXY، بعد env HTTP(S)_PROXY."""
+    """پراکسی فقط وقتی IMAGE_FETCH_PROXY در .env تنظیم شده باشد؛ وگرنه مستقیم (بدون env HTTP_PROXY)."""
     from app.config import IMAGE_FETCH_PROXY
     if IMAGE_FETCH_PROXY:
         return {"http": IMAGE_FETCH_PROXY, "https": IMAGE_FETCH_PROXY}
-    proxies = {}
-    for key in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
-        val = os.environ.get(key)
-        if val and val.strip():
-            proxies.setdefault("https", val.strip())
-            proxies.setdefault("http", val.strip())
-            return proxies
-    return None
+    return {"http": None, "https": None}
 
 
 # شبیه مرورگر تا CDN (مثل علی‌اکسپرس) اتصال را قطع نکند

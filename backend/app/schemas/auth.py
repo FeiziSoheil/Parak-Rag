@@ -12,15 +12,6 @@ class LoginRequest(BaseModel):
     password: str
 
 
-class ResendVerificationRequest(BaseModel):
-    email: EmailStr
-
-
-class VerifyCodeRequest(BaseModel):
-    email: EmailStr
-    code: str  # 6-digit numeric code
-
-
 class UserResponse(BaseModel):
     id: int
     username: str
@@ -43,8 +34,8 @@ class RequestEmailChange(BaseModel):
     new_email: EmailStr
 
 
-class ConfirmPasswordChange(BaseModel):
-    code: str
+class ChangePassword(BaseModel):
+    current_password: str
     new_password: str
 
 

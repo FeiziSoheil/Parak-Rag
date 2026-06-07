@@ -2,6 +2,7 @@
 import asyncio
 import base64
 import json
+import logging
 import re
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -42,6 +43,49 @@ from app.services.tts import text_to_speech_to_bytes
 
 router = APIRouter()
 _executor = ThreadPoolExecutor(max_workers=4)
+_logger = logging.getLogger(__name__)
+
+
+def _llm_error_detail(exc: BaseException) -> str:
+    """Human-readable message from OpenRouter / OpenAI client errors."""
+    from openai import APIConnectionError, APIStatusError, AuthenticationError, RateLimitError
+
+    if isinstance(exc, ValueError):
+        return str(exc)
+    if isinstance(exc, AuthenticationError):
+        return (
+            "OpenRouter API key is invalid or expired. "
+            "Update OPENROUTER_API_KEY in backend/.env and restart the server."
+        )
+    if isinstance(exc, RateLimitError):
+        return (
+            "OpenRouter rate limit (common on free models). Wait 1–2 minutes, "
+            "or set OPENROUTER_MODEL=openrouter/free in backend/.env"
+        )
+    if isinstance(exc, APIConnectionError):
+        return "Could not reach OpenRouter. Check internet connection or VPN/proxy."
+    if isinstance(exc, APIStatusError):
+        msg = str(exc)
+        body = getattr(exc, "body", None)
+        if isinstance(body, dict):
+            err = body.get("error")
+            if isinstance(err, dict) and err.get("message"):
+                msg = str(err["message"])
+            elif err:
+                msg = str(err)
+        code = getattr(exc, "status_code", None)
+        prefix = f"OpenRouter HTTP {code}: " if code else "OpenRouter: "
+        return prefix + msg
+    return f"AI service error: {exc}"
+
+
+def _raise_llm_http_error(exc: BaseException) -> None:
+    """Map OpenRouter/OpenAI client errors to API responses (avoid opaque 500s)."""
+    _logger.exception("LLM request failed")
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail=_llm_error_detail(exc),
+    ) from exc
 
 
 def _strip_markdown_for_tts(text: str) -> str:
@@ -150,6 +194,7 @@ async def _run_chat_response(
     user_text = None if effective_message == "(user sent an image)" else (effective_message or None)
 
     # Use LLM-based intent detection instead of keyword matching
+    intent_type = "product_search"
     if image_bytes:
         do_product_search = True
     else:
@@ -158,31 +203,38 @@ async def _run_chat_response(
             lambda: detect_intent_with_llm(user_text),
         )
         do_product_search = intent_result.get("needs_qdrant_search", False)
+        intent_type = intent_result.get("intent_type", "unknown")
+
+    # Store/FAQ questions should not trigger product search or product cards
+    include_products = do_product_search and intent_type not in ("store_info", "faq")
     
     if do_product_search:
-        if image_bytes:
-            search_results = await loop.run_in_executor(
-                _executor,
-                lambda: run_embed_and_search(
-                    user_text, image_bytes, top_k=top_k, price_max=price_max, category=category
-                ),
-            )
-        else:
-            last_shown = _get_last_shown_products(db, session_id)
-            enhanced = await loop.run_in_executor(
-                _executor,
-                lambda: enhanced_search_with_llm(
-                    user_query=user_text or "",
-                    limit=top_k or 3,
-                    price_max=price_max,
-                    category=category,
-                    last_shown_products=last_shown,
-                ),
-            )
-            search_results = enhanced["results"]
-        if not is_broad_products_query(user_text):
-            search_results = filter_search_results_by_min_score(search_results)
-        products = products_from_search_results(search_results)
+        search_results: list[dict] = []
+        products: list[dict] = []
+        if include_products:
+            if image_bytes:
+                search_results = await loop.run_in_executor(
+                    _executor,
+                    lambda: run_embed_and_search(
+                        user_text, image_bytes, top_k=top_k, price_max=price_max, category=category
+                    ),
+                )
+            else:
+                last_shown = _get_last_shown_products(db, session_id)
+                enhanced = await loop.run_in_executor(
+                    _executor,
+                    lambda: enhanced_search_with_llm(
+                        user_query=user_text or "",
+                        limit=top_k or 3,
+                        price_max=price_max,
+                        category=category,
+                        last_shown_products=last_shown,
+                    ),
+                )
+                search_results = enhanced["results"]
+            if not is_broad_products_query(user_text):
+                search_results = filter_search_results_by_min_score(search_results)
+            products = products_from_search_results(search_results)
         query_vector = await loop.run_in_executor(
             _executor,
             lambda: get_query_vector(user_text, image_bytes),
@@ -202,10 +254,13 @@ async def _run_chat_response(
 
     history = get_chat_history(db, session_id)
     search_by_image = image_bytes is not None
-    full_text = await loop.run_in_executor(
-        _executor,
-        lambda: run_rag_response(context, history, effective_message, search_by_image=search_by_image),
-    )
+    try:
+        full_text = await loop.run_in_executor(
+            _executor,
+            lambda: run_rag_response(context, history, effective_message, search_by_image=search_by_image),
+        )
+    except Exception as e:
+        _raise_llm_http_error(e)
 
     # Reorder product cards to match the order they're mentioned in the LLM response
     if products and full_text:

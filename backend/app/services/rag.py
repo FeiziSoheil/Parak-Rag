@@ -23,6 +23,7 @@ from app.config import (
     OPENROUTER_API_KEY,
     OPENROUTER_BASE_URL,
     OPENROUTER_MODEL,
+    BASE_URL,
 )
 from app.ingestion.qdrant_store import ensure_collection
 
@@ -295,13 +296,7 @@ Rules:
 - Works for ANY language (English, Persian, French, Chinese, etc.)"""
 
     try:
-        llm = ChatOpenAI(
-            model=OPENROUTER_MODEL,
-            openai_api_key=OPENROUTER_API_KEY,
-            openai_api_base=OPENROUTER_BASE_URL,
-            temperature=0,
-            max_tokens=150,
-        )
+        llm = ChatOpenAI(**_openrouter_chat_kwargs(temperature=0, max_tokens=150))
         response = llm.invoke([HumanMessage(content=prompt)])
         content = response.content if hasattr(response, "content") else str(response)
         
@@ -313,8 +308,9 @@ Rules:
                 "intent_type": data.get("intent_type", "unknown"),
                 "confidence": float(data.get("confidence", 0.5)),
             }
-    except Exception:
-        pass
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("detect_intent LLM failed, using fallback: %s", e)
     
     # Fallback on error: assume search needed for longer messages
     return {"needs_qdrant_search": len(message.strip()) > 15, "intent_type": "unknown", "confidence": 0.3}
@@ -355,13 +351,7 @@ Respond with ONLY a JSON object: {{ "emotion": "one_word_from_above" }}
 Use lowercase. No other text."""
 
     try:
-        llm = ChatOpenAI(
-            model=OPENROUTER_MODEL,
-            openai_api_key=OPENROUTER_API_KEY,
-            openai_api_base=OPENROUTER_BASE_URL,
-            temperature=0,
-            max_tokens=80,
-        )
+        llm = ChatOpenAI(**_openrouter_chat_kwargs(temperature=0, max_tokens=80))
         response = llm.invoke([HumanMessage(content=prompt)])
         content = response.content if hasattr(response, "content") else str(response)
         json_str = _extract_first_json_object(content)
@@ -395,13 +385,7 @@ Text:
 
 Language code:"""
     try:
-        llm = ChatOpenAI(
-            model=OPENROUTER_MODEL,
-            openai_api_key=OPENROUTER_API_KEY,
-            openai_api_base=OPENROUTER_BASE_URL,
-            temperature=0,
-            max_tokens=10,
-        )
+        llm = ChatOpenAI(**_openrouter_chat_kwargs(temperature=0, max_tokens=10))
         response = llm.invoke([HumanMessage(content=prompt)])
         content = (response.content if hasattr(response, "content") else str(response)).strip().lower()
         # Extract first word/token (in case LLM added something)
@@ -471,13 +455,7 @@ Respond with ONLY one word from this exact list: neutral, happy, excited, sad, c
 No explanation, no quotes, no other text."""
 
     try:
-        llm = ChatOpenAI(
-            model=OPENROUTER_MODEL,
-            openai_api_key=OPENROUTER_API_KEY,
-            openai_api_base=OPENROUTER_BASE_URL,
-            temperature=0,
-            max_tokens=20,
-        )
+        llm = ChatOpenAI(**_openrouter_chat_kwargs(temperature=0, max_tokens=20))
         response = llm.invoke([HumanMessage(content=prompt)])
         content = (response.content if hasattr(response, "content") else str(response)).strip().lower()
         # Take first token that is a valid emotion
@@ -753,15 +731,27 @@ def build_context(search_results: list[dict]) -> str:
     return "\n\n".join(parts) if parts else "No relevant products found."
 
 
+def _openrouter_chat_kwargs(**extra) -> dict:
+    """Shared ChatOpenAI kwargs for OpenRouter (incl. recommended headers)."""
+    if not OPENROUTER_API_KEY:
+        raise ValueError("OPENROUTER_API_KEY is not set in backend/.env")
+    kwargs: dict = {
+        "model": OPENROUTER_MODEL,
+        "api_key": OPENROUTER_API_KEY,
+        "base_url": OPENROUTER_BASE_URL,
+        **extra,
+    }
+    if BASE_URL:
+        kwargs["default_headers"] = {
+            "HTTP-Referer": BASE_URL.rstrip("/"),
+            "X-Title": "RAG Shop Assistant",
+        }
+    return kwargs
+
+
 def get_llm():
     """ChatOpenAI configured for OpenRouter."""
-    return ChatOpenAI(
-        model=OPENROUTER_MODEL,
-        openai_api_key=OPENROUTER_API_KEY,
-        openai_api_base=OPENROUTER_BASE_URL,
-        temperature=0.3,
-        streaming=True,
-    )
+    return ChatOpenAI(**_openrouter_chat_kwargs(temperature=0.3, streaming=True))
 
 
 def _invoke_chain_sync(

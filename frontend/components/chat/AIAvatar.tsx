@@ -1,7 +1,17 @@
 "use client";
 
-import { useMemo } from "react";
-import { motion } from "motion/react";
+import React, { useRef, useMemo } from "react";
+import { Canvas, useFrame } from "@react-three/fiber";
+import {
+  RoundedBox,
+  Sphere,
+  Text,
+  ContactShadows,
+  Environment,
+  Sparkles,
+  Torus
+} from "@react-three/drei";
+import * as THREE from "three";
 
 export type AIAvatarState = "idle" | "thinking" | "speaking";
 export type AIAvatarEmotion =
@@ -23,669 +33,418 @@ type Props = {
   className?: string;
 };
 
-// Screen glow color per emotion
+// رنگ‌های مربوط به هر احساس
 const emotionScreenColor: Record<AIAvatarEmotion, { glow: string; face: string; accent: string }> = {
-  neutral:   { glow: "#ffffff", face: "#e8e8e8", accent: "#aaaaaa" },
-  happy:     { glow: "#fcd34d", face: "#fef3c7", accent: "#f59e0b" },
-  excited:   { glow: "#f9a8d4", face: "#fdf2f8", accent: "#ec4899" },
-  sad:       { glow: "#93c5fd", face: "#dbeafe", accent: "#60a5fa" },
-  confused:  { glow: "#c4b5fd", face: "#ede9fe", accent: "#a78bfa" },
-  surprised: { glow: "#6ee7b7", face: "#d1fae5", accent: "#34d399" },
-  love:      { glow: "#fda4af", face: "#ffe4e6", accent: "#f43f5e" },
-  annoyed:   { glow: "#fdba74", face: "#ffedd5", accent: "#fb923c" },
-  angry:     { glow: "#fca5a5", face: "#fee2e2", accent: "#ef4444" },
-  sleepy:    { glow: "#a5b4fc", face: "#c7d2fe", accent: "#818cf8" },
+  neutral: { glow: "#ffffff", face: "#ffffff", accent: "#aaaaaa" },
+  happy: { glow: "#fcd34d", face: "#fcd34d", accent: "#f59e0b" },
+  excited: { glow: "#f9a8d4", face: "#f9a8d4", accent: "#ec4899" },
+  sad: { glow: "#93c5fd", face: "#93c5fd", accent: "#60a5fa" },
+  confused: { glow: "#c4b5fd", face: "#c4b5fd", accent: "#a78bfa" },
+  surprised: { glow: "#6ee7b7", face: "#6ee7b7", accent: "#34d399" },
+  love: { glow: "#fda4af", face: "#fda4af", accent: "#f43f5e" },
+  annoyed: { glow: "#fdba74", face: "#fdba74", accent: "#fb923c" },
+  angry: { glow: "#fca5a5", face: "#fca5a5", accent: "#ef4444" },
+  sleepy: { glow: "#a5b4fc", face: "#a5b4fc", accent: "#818cf8" },
 };
 
-export function AIAvatar({ state = "idle", emotion = "neutral", size = 200, className = "" }: Props) {
-  const isThinking = state === "thinking";
-  const isSpeaking = state === "speaking";
-  const colors = emotionScreenColor[emotion];
-
-  // Face expressions on the LED screen
-  const faceExpression = useMemo(() => {
-    const expressions: Record<AIAvatarEmotion, {
-      leftEye: "square" | "halfline" | "circle" | "heart" | "x" | "star";
-      rightEye: "square" | "halfline" | "circle" | "heart" | "x" | "star";
-      mouth: "flat" | "smile" | "bigsmile" | "frown" | "o" | "wave" | "heart";
-    }> = {
-      neutral:   { leftEye: "square",   rightEye: "square",   mouth: "flat"      },
-      happy:     { leftEye: "circle",   rightEye: "circle",   mouth: "smile"     },
-      excited:   { leftEye: "star",     rightEye: "star",     mouth: "bigsmile"  },
-      sad:       { leftEye: "halfline", rightEye: "halfline", mouth: "frown"     },
-      confused:  { leftEye: "circle",   rightEye: "circle",   mouth: "wave"      },
-      surprised: { leftEye: "circle",   rightEye: "circle",   mouth: "o"         },
-      love:      { leftEye: "heart",    rightEye: "heart",    mouth: "smile"     },
-      annoyed:   { leftEye: "halfline", rightEye: "halfline", mouth: "flat"      },
-      angry:     { leftEye: "x",        rightEye: "x",        mouth: "frown"     },
-      sleepy:    { leftEye: "halfline", rightEye: "halfline", mouth: "flat"      },
-    };
-    return expressions[emotion];
-  }, [emotion]);
-
-  const scale = size / 200;
-
+export function AIAvatar({ state = "idle", emotion = "neutral", size = 300, className = "" }: Props) {
   return (
-    <motion.div
+    <div
       className={`relative flex items-center justify-center select-none ${className}`}
-      style={{ width: size, height: size * 1.1 }}
-      animate={
-        state === "idle"
-          ? emotion === "sleepy"
-            ? { y: [0, -2, 0] }
-            : { y: [0, -4, 0] }
-          : isSpeaking
-          ? { y: [0, -2, 0] }
-          : { y: 0 }
-      }
-      transition={{
-        duration: isSpeaking ? 0.4 : emotion === "sleepy" ? 4 : 3.5,
-        repeat: Infinity,
-        ease: "easeInOut",
-      }}
-      aria-label={
-        state === "thinking" ? "Assistant is thinking" :
-        state === "speaking" ? "Assistant is speaking" :
-        emotion !== "neutral" ? `AI feeling ${emotion}` : "AI Assistant"
-      }
+      // اندکی بزرگ‌تر کردن قاب ظاهری برای نفس کشیدن فریم Canvas
+      style={{ width: size, height: size * 1.15 }}
+      aria-label={`AI is ${state}, feeling ${emotion}`}
     >
-      <svg
-        width="100%"
-        height="100%"
-        viewBox="0 0 200 220"
-        fill="none"
-        xmlns="http://www.w3.org/2000/svg"
-        overflow="visible"
+      <Canvas 
+         // دور کردن جزئیِ دوربین به Z=5.8 تا مشکل بریدگی کامل رفع شود
+         camera={{ position: [0, 0, 5.8], fov: 45 }}
+         style={{ overflow: "visible" }}
       >
-        <defs>
-          {/* Body gradient — soft white plastic (slightly darker) */}
-          <radialGradient id="bodyGrad" cx="35%" cy="25%" r="70%">
-            <stop offset="0%" stopColor="#e8e9ec" />
-            <stop offset="60%" stopColor="#d0d2d6" />
-            <stop offset="100%" stopColor="#a8abb2" />
-          </radialGradient>
+        <ambientLight intensity={0.6} />
+        <directionalLight position={[5, 10, 5]} intensity={1.5} castShadow />
+        <Environment preset="city" />
 
-          {/* Screen gradient — deep black with inner glow */}
-          <radialGradient id="screenGrad" cx="30%" cy="30%" r="65%">
-            <stop offset="0%" stopColor="#1a1a1a" />
-            <stop offset="100%" stopColor="#050505" />
-          </radialGradient>
+        {/* پایین کشیدن کلی مدل تا 0.15 تا به ذرات فضای اوج گیری بدهد */}
+        <group position={[0, -0.15, 0]}>
+          <Robot state={state} emotion={emotion} />
+          {/* سایه که بر اساس فاصله تنظیم شده */}
+          <ContactShadows position={[0, -1.7, 0]} opacity={0.6} scale={10} blur={2.5} far={4} />
+        </group>
 
-          {/* Screen edge bezel */}
-          <radialGradient id="bezelGrad" cx="40%" cy="20%" r="65%">
-            <stop offset="0%" stopColor="#555" />
-            <stop offset="100%" stopColor="#111" />
-          </radialGradient>
-
-          {/* Arm gradient */}
-          <radialGradient id="armGrad" cx="30%" cy="25%" r="70%">
-            <stop offset="0%" stopColor="#e0e2e6" />
-            <stop offset="100%" stopColor="#a0a4ac" />
-          </radialGradient>
-
-          {/* Ear gradient */}
-          <radialGradient id="earGrad" cx="35%" cy="25%" r="70%">
-            <stop offset="0%" stopColor="#e0e2e6" />
-            <stop offset="100%" stopColor="#a0a4ac" />
-          </radialGradient>
-
-          {/* Shadow beneath robot */}
-          <radialGradient id="shadowGrad" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="#00000030" />
-            <stop offset="100%" stopColor="#00000000" />
-          </radialGradient>
-
-          {/* Screen glow filter */}
-          <filter id="screenGlow" x="-20%" y="-20%" width="140%" height="140%">
-            <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="blur" />
-            <feMerge>
-              <feMergeNode in="blur" />
-              <feMergeNode in="SourceGraphic" />
-            </feMerge>
-          </filter>
-
-          {/* Soft body shadow */}
-          <filter id="bodyShadow" x="-15%" y="-15%" width="130%" height="130%">
-            <feDropShadow dx="0" dy="6" stdDeviation="10" floodColor="#00000025" />
-          </filter>
-
-          {/* LED scan-line pattern */}
-          <pattern id="scanlines" x="0" y="0" width="60" height="4" patternUnits="userSpaceOnUse">
-            <rect x="0" y="0" width="60" height="2" fill="white" opacity="0.04" />
-          </pattern>
-        </defs>
-
-        {/* ── Ground shadow ── */}
-        <ellipse cx="100" cy="210" rx="52" ry="10" fill="url(#shadowGrad)" />
-
-        {/* ── Left arm ── */}
-        <motion.g
-          animate={
-            isSpeaking
-              ? { rotate: [-8, 8, -8] }
-              : state === "idle"
-              ? { rotate: [-3, 3, -3] }
-              : { rotate: 0 }
-          }
-          transition={{
-            duration: isSpeaking ? 0.4 : 3,
-            repeat: Infinity,
-            ease: "easeInOut",
-          }}
-          style={{ transformOrigin: "42px 120px" }}
-        >
-          <ellipse cx="30" cy="128" rx="14" ry="22" fill="url(#armGrad)" filter="url(#bodyShadow)" />
-          {/* arm highlight */}
-          <ellipse cx="25" cy="120" rx="5" ry="8" fill="white" opacity="0.4" />
-        </motion.g>
-
-        {/* ── Right arm ── */}
-        <motion.g
-          animate={
-            isSpeaking
-              ? { rotate: [8, -8, 8] }
-              : state === "idle"
-              ? { rotate: [3, -3, 3] }
-              : { rotate: 0 }
-          }
-          transition={{
-            duration: isSpeaking ? 0.4 : 3,
-            repeat: Infinity,
-            ease: "easeInOut",
-            delay: 0.15,
-          }}
-          style={{ transformOrigin: "158px 120px" }}
-        >
-          <ellipse cx="170" cy="128" rx="14" ry="22" fill="url(#armGrad)" filter="url(#bodyShadow)" />
-          {/* arm highlight */}
-          <ellipse cx="165" cy="120" rx="5" ry="8" fill="white" opacity="0.4" />
-        </motion.g>
-
-        {/* ── Left cat ear (flat base attached to body) ── */}
-        <path
-          d="M 53 62 A 15 11 0 0 1 83 62 Z"
-          fill="url(#earGrad)"
-          transform="rotate(-15 68 52)"
-          filter="url(#bodyShadow)"
-        />
-        <path
-          d="M 60.5 57.5 A 7.5 5.5 0 0 1 75.5 57.5 Z"
-          fill="white"
-          opacity="0.5"
-          transform="rotate(-15 68 52)"
-        />
-
-        {/* ── Right cat ear (flat base attached to body) ── */}
-        <path
-          d="M 117 62 A 15 11 0 0 1 147 62 Z"
-          fill="url(#earGrad)"
-          transform="rotate(15 132 52)"
-          filter="url(#bodyShadow)"
-        />
-        <path
-          d="M 124.5 57.5 A 7.5 5.5 0 0 1 139.5 57.5 Z"
-          fill="white"
-          opacity="0.5"
-          transform="rotate(15 132 52)"
-        />
-
-        {/* ── Main body (rounded square head) ── */}
-        <motion.rect
-          x="42" y="62"
-          width="116" height="118"
-          rx="32"
-          fill="url(#bodyGrad)"
-          filter="url(#bodyShadow)"
-          animate={
-            isThinking
-              ? { scale: [1, 1.02, 1] }
-              : { scale: 1 }
-          }
-          transition={{ duration: 1.2, repeat: Infinity, ease: "easeInOut" }}
-          style={{ transformOrigin: "100px 121px" }}
-        />
-
-        {/* Body top highlight */}
-        <ellipse cx="82" cy="76" rx="28" ry="10" fill="white" opacity="0.35" style={{ filter: "blur(4px)" }} />
-
-        {/* ── Screen bezel ── */}
-        <rect x="55" y="78" width="90" height="82" rx="18" fill="url(#bezelGrad)" />
-
-        {/* ── LED Screen ── */}
-        <rect x="58" y="81" width="84" height="76" rx="16" fill="url(#screenGrad)" />
-
-        {/* Scanline overlay */}
-        <rect x="58" y="81" width="84" height="76" rx="16" fill="url(#scanlines)" />
-
-        {/* Screen inner subtle glow from emotion */}
-        <motion.rect
-          x="58" y="81" width="84" height="76" rx="16"
-          fill={colors.glow}
-          opacity={0}
-          animate={{ opacity: [0, 0.04, 0] }}
-          transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
-        />
-
-        {/* ── FACE ELEMENTS on the screen (look around when idle) ── */}
-        <motion.g
-          filter="url(#screenGlow)"
-          animate={
-            state === "idle" && emotion !== "surprised" && emotion !== "angry" && emotion !== "sleepy"
-              ? {
-                  x: [0, -5, 0, 4, 0, 6, 0, -4, 0, 3, 0, -5, 0],
-                  y: [0, 0, -2, -3, 0, 1, 0, 2, 0, -2, 0, 1, 0],
-                }
-              : { x: 0, y: 0 }
-          }
-          transition={{
-            duration: 5,
-            times: [0, 0.08, 0.15, 0.23, 0.31, 0.39, 0.46, 0.54, 0.62, 0.7, 0.77, 0.85, 1],
-            repeat: state === "idle" && emotion !== "surprised" && emotion !== "angry" && emotion !== "sleepy" ? Infinity : 0,
-            repeatType: "reverse",
-            repeatDelay: 14,
-            ease: "easeInOut",
-          }}
-        >
-          {/* LEFT EYE */}
-          <ScreenEye
-            x={76} y={107}
-            type={faceExpression.leftEye}
-            color={colors.face}
-            glow={colors.glow}
-            accent={colors.accent}
-            state={state}
-            side="left"
-            emotion={emotion}
-          />
-
-          {/* RIGHT EYE */}
-          <ScreenEye
-            x={114} y={107}
-            type={faceExpression.rightEye}
-            color={colors.face}
-            glow={colors.glow}
-            accent={colors.accent}
-            state={state}
-            side="right"
-            emotion={emotion}
-          />
-
-          {/* MOUTH */}
-          <ScreenMouth
-            cx={100} cy={138}
-            type={faceExpression.mouth}
-            color={colors.face}
-            glow={colors.glow}
-            accent={colors.accent}
-            isSpeaking={isSpeaking}
-          />
-        </motion.g>
-
-        {/* Screen reflection shine */}
-        <motion.rect
-          x="62" y="84" width="38" height="20" rx="8"
-          fill="white" opacity="0.06"
-          animate={{ opacity: [0.05, 0.1, 0.05] }}
-          transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
-        />
-
-        {/* ── THINKING: floating dots above head ── */}
-        {isThinking && (
-          <g>
-            {[0, 1, 2].map((i) => (
-              <motion.circle
-                key={i}
-                cx={86 + i * 14}
-                cy={55}
-                r={4}
-                fill={colors.glow}
-                opacity={0.9}
-                animate={{
-                  y: [0, -8, 0],
-                  opacity: [0.4, 1, 0.4],
-                }}
-                transition={{
-                  duration: 0.9,
-                  repeat: Infinity,
-                  delay: i * 0.22,
-                  ease: "easeInOut",
-                }}
-              />
-            ))}
-          </g>
-        )}
-
-        {/* ── SPEAKING: soundwave outside body ── */}
-        {isSpeaking && (
-          <>
-            {[0, 1, 2].map((i) => (
-              <motion.rect
-                key={i}
-                x={153 + i * 7} y={110}
-                width="3.5" height="12"
-                rx="1.8"
-                fill={colors.glow}
-                animate={{ height: [12, 24, 12], y: [110, 104, 110], opacity: [0.5, 1, 0.5] }}
-                transition={{ duration: 0.38, repeat: Infinity, delay: i * 0.1, ease: "easeInOut" }}
-              />
-            ))}
-            {[0, 1, 2].map((i) => (
-              <motion.rect
-                key={`l${i}`}
-                x={34 - i * 7} y={110}
-                width="3.5" height="12"
-                rx="1.8"
-                fill={colors.glow}
-                animate={{ height: [12, 24, 12], y: [110, 104, 110], opacity: [0.5, 1, 0.5] }}
-                transition={{ duration: 0.38, repeat: Infinity, delay: i * 0.1, ease: "easeInOut" }}
-              />
-            ))}
-          </>
-        )}
-
-        {/* ── EMOTION FX ── */}
-
-        {/* LOVE: mini hearts floating up */}
-        {emotion === "love" && [0, 1, 2].map((i) => (
-          <motion.g key={i}
-            animate={{ y: [0, -40], opacity: [0.9, 0] }}
-            transition={{ duration: 1.8 + i * 0.3, repeat: Infinity, delay: i * 0.6, ease: "easeOut" }}
-            style={{ transformOrigin: `${88 + i * 14}px 60px` }}
-          >
-            <text x={82 + i * 14} y={66} fontSize={10 + i * 2} fill={colors.accent} opacity={0.9}>♥</text>
-          </motion.g>
-        ))}
-
-        {/* EXCITED: sparkles */}
-        {emotion === "excited" && [0, 1, 2, 3].map((i) => {
-          const angle = (i / 4) * Math.PI * 2;
-          const bx = 100 + 62 * Math.cos(angle);
-          const by = 121 + 62 * Math.sin(angle);
-          return (
-            <motion.g key={i}
-              animate={{ scale: [0, 1.3, 0], opacity: [0, 1, 0] }}
-              transition={{ duration: 0.85, repeat: Infinity, delay: i * 0.2, ease: "easeInOut" }}
-              style={{ transformOrigin: `${bx}px ${by}px` }}
-            >
-              <line x1={bx - 5} y1={by} x2={bx + 5} y2={by} stroke={colors.glow} strokeWidth="2.5" strokeLinecap="round" />
-              <line x1={bx} y1={by - 5} x2={bx} y2={by + 5} stroke={colors.glow} strokeWidth="2.5" strokeLinecap="round" />
-            </motion.g>
-          );
-        })}
-
-        {/* SAD: tear drop */}
-        {emotion === "sad" && (
-          <motion.ellipse cx="72" cy="114" rx="3" ry="5"
-            fill={colors.glow} opacity={0.85}
-            animate={{ cy: [114, 132], opacity: [0.85, 0], ry: [5, 4] }}
-            transition={{ duration: 2.2, repeat: Infinity, ease: "easeIn" }}
-          />
-        )}
-
-        {/* SURPRISED: ring burst */}
-        {emotion === "surprised" && (
-          <motion.circle cx="100" cy="119" r="55" fill="none"
-            stroke={colors.glow} strokeWidth="2" opacity={0.3}
-            animate={{ r: [50, 65], opacity: [0.4, 0] }}
-            transition={{ duration: 0.8, repeat: Infinity, ease: "easeOut" }}
-          />
-        )}
-
-        {/* ANGRY: steam puffs from ears */}
-        {emotion === "angry" && [0, 1].map((i) => (
-          <motion.ellipse key={i}
-            cx={i === 0 ? 58 : 142} cy={54}
-            rx={5} ry={4}
-            fill={colors.accent} opacity={0.7}
-            animate={{ cy: [54, 36], opacity: [0.7, 0], scale: [1, 1.6] }}
-            transition={{ duration: 1, repeat: Infinity, delay: i * 0.3, ease: "easeOut" }}
-          />
-        ))}
-
-        {/* SLEEPY: floating Z's */}
-        {emotion === "sleepy" && [0, 1, 2].map((i) => (
-          <motion.g key={i}
-            animate={{ x: [0, 8], y: [-20, -50], opacity: [0.7, 0], rotate: [0, 10] }}
-            transition={{ duration: 2.5 + i * 0.4, repeat: Infinity, delay: i * 0.8, ease: "easeOut" }}
-            style={{ transformOrigin: `${95 + i * 8}px 55px` }}
-          >
-            <text x={90 + i * 10} y={58} fontSize={12 + i * 2} fill={colors.accent} opacity={0.8} fontWeight="bold">Z</text>
-          </motion.g>
-        ))}
-
-      </svg>
-    </motion.div>
+      </Canvas>
+    </div>
   );
 }
 
-// ── Sub-component: Screen Eye ──────────────────────────────────────────────
-function ScreenEye({
-  x, y, type, color, glow, accent, state, side, emotion
-}: {
-  x: number; y: number;
-  type: "square" | "halfline" | "circle" | "heart" | "x" | "star";
-  color: string; glow: string; accent: string;
-  state: AIAvatarState;
-  side: "left" | "right";
-  emotion?: AIAvatarEmotion;
-}) {
-  const isIdle = state === "idle";
-  const isSleepy = emotion === "sleepy";
+// ── مدل ربات ──────────────────────────────────────────────
+function Robot({ state, emotion }: { state: AIAvatarState; emotion: AIAvatarEmotion }) {
+  const groupRef = useRef<THREE.Group>(null);
+  const leftArmRef = useRef<THREE.Mesh>(null);
+  const rightArmRef = useRef<THREE.Mesh>(null);
+  const colors = emotionScreenColor[emotion];
 
-  if (type === "square") {
-    return (
-      <motion.g>
-        {/* LED square eye — blink when idle */}
-        <motion.rect
-          x={x - 12} y={y - 12}
-          width={24} height={24}
-          rx={4}
-          fill={glow}
-          opacity={0.85}
-          animate={isIdle ? { opacity: [0.7, 1, 0.7], scaleY: [1, 0.02, 1] } : { opacity: [0.8, 1, 0.8] }}
-          transition={isIdle ? {
-            opacity: { duration: 3.5, repeat: Infinity, ease: "easeInOut" },
-            scaleY: { duration: 0.14, repeat: Infinity, repeatDelay: 3.5, ease: "easeInOut", delay: 0 }
-          } : { duration: 1.5, repeat: Infinity }}
-          style={{ transformOrigin: `${x}px ${y}px` }}
-        />
-        {/* horizontal scanlines inside */}
-        {[0, 1, 2, 3, 4, 5].map((i) => (
-          <motion.rect
-            key={i}
-            x={x - 11} y={y - 11 + i * 4}
-            width={22} height={1.5}
-            fill="black" opacity={0.3}
-          />
-        ))}
-      </motion.g>
-    );
-  }
+  // منطق حرکتی پیشرفته بدن
+  useFrame((rootState) => {
+    const t = rootState.clock.getElapsedTime();
+    const isSpeaking = state === "speaking";
+    const isSleepy = emotion === "sleepy";
+    const isSad = emotion === "sad";
+    const isConfused = emotion === "confused";
+    const isAngry = emotion === "angry";
+    const isExcited = emotion === "excited";
 
-  if (type === "halfline") {
-    return (
-      <motion.rect
-        x={x - 12} y={y - 3}
-        width={24} height={6}
-        rx={3}
-        fill={glow}
-        opacity={0.85}
-        animate={isSleepy ? { opacity: [0.6, 0.9, 0.6] } : isIdle ? { opacity: [0.7, 1, 0.7], scaleY: [1, 0.08, 1] } : { opacity: [0.7, 1, 0.7] }}
-        transition={isSleepy ? { opacity: { duration: 2.5, repeat: Infinity, ease: "easeInOut" } } : isIdle ? {
-          opacity: { duration: 1.5, repeat: Infinity, ease: "easeInOut" },
-          scaleY: { duration: 0.14, repeat: Infinity, repeatDelay: 3.5, ease: "easeInOut", delay: 0 }
-        } : { duration: 1.5, repeat: Infinity, ease: "easeInOut" }}
-        style={{ transformOrigin: `${x}px ${y}px` }}
-      />
-    );
-  }
+    if (groupRef.current) {
+      const floatSpeed = isSleepy || isSad ? 1 : isExcited ? 5 : isSpeaking ? 3 : 2;
+      const floatHeight = isSleepy || isSad ? 0.05 : isExcited ? 0.15 : 0.08;
+      let targetY = Math.sin(t * floatSpeed) * floatHeight;
 
-  if (type === "circle") {
-    return (
-      <motion.g>
-        <motion.circle
-          cx={x} cy={y} r={10}
-          fill={glow}
-          opacity={0.85}
-          animate={isIdle ? { scaleY: [1, 0.02, 1], opacity: [0.8, 1, 0.8] } : { opacity: [0.8, 1, 0.8] }}
-          transition={isIdle ? {
-            scaleY: { duration: 0.14, repeat: Infinity, repeatDelay: 3.5, ease: "easeInOut", delay: 0 },
-            opacity: { duration: 2, repeat: Infinity }
-          } : { duration: 1.5, repeat: Infinity }}
-          style={{ transformOrigin: `${x}px ${y}px` }}
-        />
-        <circle cx={x - 3} cy={y - 3} r={2.5} fill="black" opacity={0.3} />
-      </motion.g>
-    );
-  }
+      if (isAngry) {
+        targetY += (Math.random() - 0.5) * 0.04;
+        groupRef.current.position.x = (Math.random() - 0.5) * 0.04;
+      } else {
+        groupRef.current.position.x = THREE.MathUtils.lerp(groupRef.current.position.x, 0, 0.1);
+      }
+      groupRef.current.position.y = targetY;
 
-  if (type === "heart") {
-    return (
-      <motion.g
-        animate={{ scale: [1, 1.15, 1] }}
-        transition={{ duration: 0.9, repeat: Infinity, ease: "easeInOut", delay: side === "right" ? 0.15 : 0 }}
-        style={{ transformOrigin: `${x}px ${y}px` }}
-      >
-        <text x={x - 8} y={y + 7} fontSize={18} fill={accent} opacity={0.95}>♥</text>
-      </motion.g>
-    );
-  }
+      let targetRotX = 0;
+      let targetRotY = 0;
+      let targetRotZ = 0;
 
-  if (type === "x") {
-    return (
-      <motion.g
-        animate={{ opacity: [0.8, 1, 0.8] }}
-        transition={{ duration: 0.5, repeat: Infinity }}
-      >
-        <line x1={x - 9} y1={y - 9} x2={x + 9} y2={y + 9} stroke={accent} strokeWidth={4} strokeLinecap="round" />
-        <line x1={x + 9} y1={y - 9} x2={x - 9} y2={y + 9} stroke={accent} strokeWidth={4} strokeLinecap="round" />
-      </motion.g>
-    );
-  }
+      if (!isSleepy) {
+        targetRotY = (rootState.pointer.x * Math.PI) / 6;
+        targetRotX = -(rootState.pointer.y * Math.PI) / 6;
 
-  if (type === "star") {
-    const pts = Array.from({ length: 5 }).map((_, i) => {
-      const ang = (i * 2 * Math.PI) / 5 - Math.PI / 2;
-      const angIn = ang + Math.PI / 5;
-      const or = 11;
-      const ir = 5;
-      return `${x + or * Math.cos(ang)},${y + or * Math.sin(ang)} ${x + ir * Math.cos(angIn)},${y + ir * Math.sin(angIn)}`;
-    }).join(" ");
-    return (
-      <motion.polygon
-        points={pts}
-        fill={glow}
-        opacity={0.9}
-        animate={{ scale: [1, 1.12, 1], rotate: [0, 15, 0] }}
-        transition={{ duration: 1, repeat: Infinity, ease: "easeInOut" }}
-        style={{ transformOrigin: `${x}px ${y}px` }}
-      />
-    );
-  }
+        if (isSad) targetRotX -= 0.3; 
+        if (isConfused) targetRotZ = -0.15; 
+        if (isSpeaking) targetRotX += Math.sin(t * 8) * 0.03; 
+        if (isExcited) targetRotY += Math.sin(t * 12) * 0.1; 
 
-  return null;
+      } else {
+        targetRotX = 0.2 + Math.sin(t) * 0.05; 
+      }
+
+      groupRef.current.rotation.y = THREE.MathUtils.lerp(groupRef.current.rotation.y, targetRotY, 0.1);
+      groupRef.current.rotation.x = THREE.MathUtils.lerp(groupRef.current.rotation.x, targetRotX, 0.1);
+      groupRef.current.rotation.z = THREE.MathUtils.lerp(groupRef.current.rotation.z, targetRotZ, 0.1);
+    }
+
+    if (leftArmRef.current && rightArmRef.current) {
+      let armSwing = isSpeaking ? Math.sin(t * 8) * 0.2 : Math.sin(t * 2) * 0.05;
+      if (isExcited) armSwing = Math.sin(t * 15) * 0.4;
+      if (isSad || isSleepy) armSwing *= 0.2; 
+
+      leftArmRef.current.rotation.x = THREE.MathUtils.lerp(leftArmRef.current.rotation.x, armSwing, 0.2);
+      rightArmRef.current.rotation.x = THREE.MathUtils.lerp(rightArmRef.current.rotation.x, -armSwing, 0.2);
+    }
+  });
+
+  const bodyMaterial = <meshPhysicalMaterial color="#e8e9ec" roughness={0.2} metalness={0.1} clearcoat={0.8} />;
+
+  return (
+    <group ref={groupRef} position={[0, 0, 0]}>
+      <RoundedBox args={[2.2, 2.2, 2]} radius={0.4} smoothness={4} position={[0, 0, 0]}>{bodyMaterial}</RoundedBox>
+      <mesh position={[-0.8, 1.2, 0]} rotation={[0, 0, 0.3]}><coneGeometry args={[0.3, 0.8, 16]} />{bodyMaterial}</mesh>
+      <mesh position={[0.8, 1.2, 0]} rotation={[0, 0, -0.3]}><coneGeometry args={[0.3, 0.8, 16]} />{bodyMaterial}</mesh>
+      
+      <mesh ref={leftArmRef} position={[-1.3, -0.2, 0]}><capsuleGeometry args={[0.25, 0.8, 16, 16]} />{bodyMaterial}</mesh>
+      <mesh ref={rightArmRef} position={[1.3, -0.2, 0]}><capsuleGeometry args={[0.25, 0.8, 16, 16]} />{bodyMaterial}</mesh>
+
+      <RoundedBox args={[1.8, 1.5, 0.1]} radius={0.2} position={[0, 0, 1.01]}>
+        <meshStandardMaterial color="#111" roughness={0.8} />
+      </RoundedBox>
+
+      <RoundedBox args={[1.6, 1.3, 0.05]} radius={0.15} position={[0, 0, 1.05]}>
+        <meshPhysicalMaterial color="#000000" roughness={0.05} metalness={0.8} clearcoat={1} />
+      </RoundedBox>
+
+      <group position={[0, 0, 1.08]}>
+        <Face state={state} emotion={emotion} colors={colors} />
+      </group>
+
+      <EmotionEffects state={state} emotion={emotion} colors={colors} />
+      <SoundWaves isSpeaking={state === "speaking"} color={colors.glow} />
+    </group>
+  );
 }
 
-// ── Sub-component: Screen Mouth ───────────────────────────────────────────
-function ScreenMouth({
-  cx, cy, type, color, glow, accent, isSpeaking
-}: {
-  cx: number; cy: number;
-  type: "flat" | "smile" | "bigsmile" | "frown" | "o" | "wave" | "heart";
-  color: string; glow: string; accent: string;
-  isSpeaking: boolean;
-}) {
-  if (isSpeaking) {
-    return (
-      <motion.rect
-        x={cx - 14} y={cy - 8}
-        width={28} height={16}
-        rx={8}
-        fill={glow}
-        animate={{ height: [16, 26, 16], y: [cy - 8, cy - 13, cy - 8], width: [28, 32, 28], x: [cx - 14, cx - 16, cx - 14] }}
-        transition={{ duration: 0.38, repeat: Infinity, ease: "easeInOut" }}
-      />
-    );
-  }
+// ── صورت ──────────────────────────────────────────────
+type FaceProps = {
+  state: AIAvatarState;
+  emotion: AIAvatarEmotion;
+  colors: { glow: string; face: string; accent: string };
+};
+function Face({ state, emotion, colors }: FaceProps) {
+  const isSpeaking = state === "speaking";
+  const expressions = useMemo(() => {
+    const map: Record<AIAvatarEmotion, { eye: string; mouth: string }> = {
+      neutral: { eye: "square", mouth: "flat" },
+      happy: { eye: "circle", mouth: "smile" },
+      excited: { eye: "star", mouth: "bigsmile" },
+      sad: { eye: "halfline", mouth: "frown" },
+      confused: { eye: "circle", mouth: "wave" },
+      surprised: { eye: "circle", mouth: "o" },
+      love: { eye: "heart", mouth: "smile" },
+      annoyed: { eye: "halfline", mouth: "flat" },
+      angry: { eye: "x", mouth: "frown" },
+      sleepy: { eye: "halfline", mouth: "flat" },
+    };
+    return map[emotion];
+  }, [emotion]);
 
-  if (type === "flat") {
-    return (
-      <motion.rect
-        x={cx - 16} y={cy - 3}
-        width={32} height={6}
-        rx={3}
-        fill={glow} opacity={0.8}
-        animate={{ opacity: [0.7, 1, 0.7] }}
-        transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
-      />
-    );
-  }
+  return (
+    <>
+      <group position={[-0.35, 0.2, 0]}>
+        <Eye type={expressions.eye} color={colors.face} isIdle={state === "idle"} />
+      </group>
+      <group position={[0.35, 0.2, 0]}>
+        <Eye type={expressions.eye} color={colors.face} isIdle={state === "idle"} />
+      </group>
+      <group position={[0, -0.25, 0]}>
+        <Mouth type={expressions.mouth} color={colors.face} isSpeaking={isSpeaking} isSurprised={emotion === 'surprised'} />
+      </group>
+    </>
+  );
+}
 
-  if (type === "smile") {
-    return (
-      <motion.path
-        d={`M ${cx - 16} ${cy - 2} Q ${cx} ${cy + 14} ${cx + 16} ${cy - 2}`}
-        stroke={glow} strokeWidth={5} strokeLinecap="round" fill="none"
-        animate={{ opacity: [0.8, 1, 0.8] }}
-        transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
-      />
-    );
-  }
+function Eye({ type, color, isIdle }: any) {
+  const eyeRef = useRef<THREE.Group>(null);
 
-  if (type === "bigsmile") {
-    return (
-      <motion.path
-        d={`M ${cx - 18} ${cy - 4} Q ${cx} ${cy + 18} ${cx + 18} ${cy - 4}`}
-        stroke={glow} strokeWidth={6} strokeLinecap="round" fill="none"
-        animate={{ d: [`M ${cx - 18} ${cy - 4} Q ${cx} ${cy + 18} ${cx + 18} ${cy - 4}`, `M ${cx - 18} ${cy - 4} Q ${cx} ${cy + 22} ${cx + 18} ${cy - 4}`, `M ${cx - 18} ${cy - 4} Q ${cx} ${cy + 18} ${cx + 18} ${cy - 4}`] }}
-        transition={{ duration: 0.6, repeat: Infinity, ease: "easeInOut" }}
-      />
-    );
-  }
+  useFrame((state) => {
+    if (!eyeRef.current) return;
+    const t = state.clock.getElapsedTime();
+    if (isIdle) {
+      const blink = Math.sin(t * 3) > 0.95 ? 0.1 : 1;
+      eyeRef.current.scale.y = THREE.MathUtils.lerp(eyeRef.current.scale.y, blink, 0.5);
+    }
+    if (type === "star") eyeRef.current.rotation.z -= 0.05;
+    else eyeRef.current.rotation.z = 0;
+  });
 
-  if (type === "frown") {
-    return (
-      <motion.path
-        d={`M ${cx - 14} ${cy + 6} Q ${cx} ${cy - 6} ${cx + 14} ${cy + 6}`}
-        stroke={glow} strokeWidth={5} strokeLinecap="round" fill="none"
-        animate={{ opacity: [0.7, 1, 0.7] }}
-        transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut" }}
-      />
-    );
-  }
+  const glowingMat = <meshBasicMaterial color={color} toneMapped={false} />;
 
-  if (type === "o") {
-    return (
-      <motion.ellipse
-        cx={cx} cy={cy}
-        rx={10} ry={12}
-        fill={glow} opacity={0.85}
-        animate={{ ry: [12, 15, 12], rx: [10, 11, 10] }}
-        transition={{ duration: 0.7, repeat: Infinity, ease: "easeInOut" }}
-      />
-    );
-  }
+  return (
+    <group ref={eyeRef}>
+      {type === "square" && <RoundedBox args={[0.25, 0.25, 0.02]} radius={0.05}>{glowingMat}</RoundedBox>}
+      {type === "halfline" && <RoundedBox args={[0.25, 0.08, 0.02]} radius={0.02}>{glowingMat}</RoundedBox>}
+      {type === "circle" && <Sphere args={[0.12, 16, 16]} scale={[1, 1, 0.2]}>{glowingMat}</Sphere>}
+      {type === "heart" && <Text fontSize={0.35} color={color} anchorX="center" anchorY="middle">♥</Text>}
+      {type === "x" && <Text fontSize={0.35} color={color} anchorX="center" anchorY="middle">X</Text>}
+      {type === "star" && <Text fontSize={0.45} color={color} anchorX="center" anchorY="middle">★</Text>}
+    </group>
+  );
+}
 
-  if (type === "wave") {
-    return (
-      <motion.path
-        d={`M ${cx - 16} ${cy} Q ${cx - 8} ${cy - 8} ${cx} ${cy} Q ${cx + 8} ${cy + 8} ${cx + 16} ${cy}`}
-        stroke={glow} strokeWidth={5} strokeLinecap="round" fill="none"
-        animate={{ d: [`M ${cx - 16} ${cy} Q ${cx - 8} ${cy - 8} ${cx} ${cy} Q ${cx + 8} ${cy + 8} ${cx + 16} ${cy}`, `M ${cx - 16} ${cy} Q ${cx - 8} ${cy + 8} ${cx} ${cy} Q ${cx + 8} ${cy - 8} ${cx + 16} ${cy}`, `M ${cx - 16} ${cy} Q ${cx - 8} ${cy - 8} ${cx} ${cy} Q ${cx + 8} ${cy + 8} ${cx + 16} ${cy}`] }}
-        transition={{ duration: 1.1, repeat: Infinity, ease: "easeInOut" }}
-      />
-    );
-  }
+function Mouth({ type, color, isSpeaking, isSurprised }: any) {
+  const mouthRef = useRef<THREE.Group>(null);
 
-  if (type === "heart") {
-    return (
-      <motion.text x={cx - 10} y={cy + 8} fontSize={20} fill={accent}
-        animate={{ scale: [1, 1.12, 1] }}
-        transition={{ duration: 1, repeat: Infinity, ease: "easeInOut" }}
-        style={{ transformOrigin: `${cx}px ${cy}px` }}
-      >♥</motion.text>
-    );
-  }
+  useFrame((state) => {
+    if (!mouthRef.current) return;
+    const t = state.clock.getElapsedTime();
+    
+    if (isSpeaking) {
+      const lipSync = 0.5 + Math.abs(Math.sin(t * 15) * 0.5 + Math.cos(t * 8) * 0.3);
+      mouthRef.current.scale.y = THREE.MathUtils.lerp(mouthRef.current.scale.y, lipSync, 0.3);
+    } else if (isSurprised) {
+      mouthRef.current.scale.y = 1 + Math.abs(Math.sin(t * 4) * 0.4);
+      mouthRef.current.scale.x = 1 + Math.abs(Math.sin(t * 4) * 0.4);
+    } else {
+      mouthRef.current.scale.y = THREE.MathUtils.lerp(mouthRef.current.scale.y, 1, 0.3);
+      mouthRef.current.scale.x = THREE.MathUtils.lerp(mouthRef.current.scale.x, 1, 0.3);
+    }
+  });
 
-  return null;
+  const glowingMat = <meshBasicMaterial color={color} toneMapped={false} />;
+
+  return (
+    <group ref={mouthRef}>
+      {isSpeaking ? (
+        <RoundedBox args={[0.35, 0.12, 0.02]} radius={0.05}>{glowingMat}</RoundedBox>
+      ) : (
+        <>
+          {type === "flat" && <RoundedBox args={[0.35, 0.06, 0.02]} radius={0.02}>{glowingMat}</RoundedBox>}
+          {type === "smile" && <Torus args={[0.15, 0.03, 16, 32, Math.PI]} rotation={[0, 0, Math.PI]}>{glowingMat}</Torus>}
+          {type === "bigsmile" && <Torus args={[0.2, 0.04, 16, 32, Math.PI]} rotation={[0, 0, Math.PI]}>{glowingMat}</Torus>}
+          {type === "frown" && <Torus args={[0.15, 0.03, 16, 32, Math.PI]} position={[0, -0.05, 0]}>{glowingMat}</Torus>}
+          {type === "o" && <Torus args={[0.1, 0.04, 16, 32]}>{glowingMat}</Torus>}
+          {type === "wave" && <Text fontSize={0.35} color={color} anchorX="center" anchorY="middle">~</Text>}
+        </>
+      )}
+    </group>
+  );
+}
+
+// ── افکت‌های هیجان‌انگیز محیطی و احساسات (با ارتفاع‌های بهینه‌سازی شده) ───
+function EmotionEffects({ state, emotion, colors }: any) {
+  return (
+    <>
+      {state === "thinking" && <SpinnerParticle color={colors.glow} />}
+
+      {emotion === "love" && (
+        <group position={[0, 1.2, 0]}>
+          <FloatingParticle delay={0} speed={1.5} position={[-1.2, 0]} bobbing scaleBobbing>
+            <Text fontSize={0.6} color={colors.accent}>♥</Text>
+          </FloatingParticle>
+          <FloatingParticle delay={1} speed={1} position={[1.2, -0.2]} bobbing scaleBobbing>
+            <Text fontSize={0.4} color={colors.accent}>♥</Text>
+          </FloatingParticle>
+        </group>
+      )}
+
+      {emotion === "sleepy" && (
+        <group position={[0.8, 1.1, 0]}>
+          <FloatingParticle delay={0} speed={0.5} position={[0, 0]}>
+            <Text fontSize={0.4} color={colors.accent}>Z</Text>
+          </FloatingParticle>
+          <FloatingParticle delay={1} speed={0.4} position={[0.5, 0.4]}>
+            <Text fontSize={0.6} color={colors.accent}>Z</Text>
+          </FloatingParticle>
+        </group>
+      )}
+
+      {emotion === "surprised" && <ShockwaveParticle color={colors.glow} />}
+
+      {emotion === "confused" && (
+        <group position={[1.2, 1.3, 0]}>
+           <FloatingParticle speed={1} bobbing spin>
+             <Text fontSize={0.7} color={colors.glow}>?</Text>
+           </FloatingParticle>
+        </group>
+      )}
+
+      {emotion === "sad" && (
+        <>
+          <TearParticle x={-0.35} y={0.1} delay={0} />
+          <TearParticle x={0.35} y={0.1} delay={1.5} />
+        </>
+      )}
+
+      {/* ابر عصبانی که از حالت بُرش رهایی یافته است :) */}
+      {emotion === "angry" && (
+        <Sparkles count={40} scale={[2.5, 1.2, 1.5]} size={8} speed={3} opacity={0.7} position={[0, 1.25, -0.2]} color="#ef4444" noise={1} />
+      )}
+
+      {emotion === "excited" && (
+        <Sparkles count={50} scale={4} size={6} speed={2} opacity={1} color={colors.glow} />
+      )}
+    </>
+  );
+}
+
+// ── ابزارهای کمکی ───────────────────────────
+
+function FloatingParticle({ children, delay = 0, speed = 1, position =[0, 0], bobbing=false, scaleBobbing=false, spin=false }: any) {
+  const ref = useRef<THREE.Group>(null);
+  useFrame((state) => {
+    if (!ref.current) return;
+    const t = state.clock.getElapsedTime() + delay;
+    
+    if (bobbing) {
+       ref.current.position.y = position[1] + Math.sin(t * speed) * 0.2;
+    } else {
+       const y = (t * speed) % 2; 
+       ref.current.position.y = y;
+       ref.current.position.x = position[0] + Math.sin(t * 2) * 0.1;
+       ref.current.traverse((child: any) => {
+          if (child.material) {
+            child.material.transparent = true;
+            child.material.opacity = 1 - (y / 2);
+          }
+       });
+    }
+
+    if (scaleBobbing) ref.current.scale.setScalar(1 + Math.sin(t * speed * 2) * 0.2);
+    if (spin) ref.current.rotation.y = t * 2;
+  });
+
+  return <group ref={ref} position={[position[0], position[1], 0]}>{children}</group>;
+}
+
+function TearParticle({ x, y, delay }: { x: number; y: number; delay: number }) {
+  const ref = useRef<THREE.Mesh>(null);
+  useFrame((state) => {
+    if (!ref.current) return;
+    const t = (state.clock.getElapsedTime() + delay) * 0.8;
+    const fallTime = t % 2;
+    ref.current.position.y = y - (fallTime * 1.5);
+    const material = ref.current.material as THREE.MeshBasicMaterial;
+    material.opacity = fallTime < 1.8 ? 1 - (fallTime / 1.8) : 0;
+  });
+  return (
+    <mesh ref={ref} position={[x, y, 1.1]}>
+      <sphereGeometry args={[0.04, 8, 8]} />
+      <meshBasicMaterial color="#93c5fd" transparent />
+    </mesh>
+  );
+}
+
+function SpinnerParticle({ color }: { color: string }) {
+  const groupRef = useRef<THREE.Group>(null);
+  useFrame((state) => {
+    if (groupRef.current) groupRef.current.rotation.y -= 0.05;
+  });
+  return (
+    <group ref={groupRef} position={[0, 1.6, 0]}>
+      {[0, 1, 2].map((i) => (
+        <mesh key={i} position={[Math.cos(i * (Math.PI*2/3)) * 0.35, 0, Math.sin(i * (Math.PI*2/3)) * 0.35]}>
+          <sphereGeometry args={[0.06]} />
+          <meshBasicMaterial color={color} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+function ShockwaveParticle({ color }: { color: string }) {
+  const ref = useRef<THREE.Mesh>(null);
+  useFrame((state) => {
+    if (!ref.current) return;
+    const t = (state.clock.getElapsedTime() * 1.5) % 2;
+    ref.current.scale.setScalar(t * 3 + 1);
+    (ref.current.material as THREE.MeshBasicMaterial).opacity = 1 - (t / 2);
+  });
+  return (
+    <mesh ref={ref} position={[0, 0, -1]}>
+      <torusGeometry args={[1, 0.02, 16, 64]} />
+      <meshBasicMaterial color={color} transparent depthWrite={false} />
+    </mesh>
+  );
+}
+
+function SoundWaves({ isSpeaking, color }: { isSpeaking: boolean; color: string }) {
+  const leftRef = useRef<THREE.Group>(null);
+  const rightRef = useRef<THREE.Group>(null);
+  
+  useFrame((state) => {
+    const t = state.clock.getElapsedTime();
+    if (!leftRef.current || !rightRef.current) return;
+
+    leftRef.current.children.forEach((child, i) => {
+      const scale = isSpeaking ? 1 + Math.abs(Math.sin(t * (10 + i * 5))) * 1.5 : 0;
+      child.scale.y = THREE.MathUtils.lerp(child.scale.y, scale, 0.2);
+    });
+    
+    rightRef.current.children.forEach((child, i) => {
+      const scale = isSpeaking ? 1 + Math.abs(Math.cos(t * (12 + i * 4))) * 1.5 : 0;
+      child.scale.y = THREE.MathUtils.lerp(child.scale.y, scale, 0.2);
+    });
+  });
+
+  return (
+    <group position={[0, -0.3, 0]}>
+      <group ref={leftRef} position={[-1.4, 0, 0]}>
+        {[0, 1, 2].map((i) => (
+           <RoundedBox key={i} args={[0.08, 0.2, 0.08]} radius={0.03} position={[i * 0.15, 0, 0]}>
+              <meshBasicMaterial color={color} toneMapped={false} />
+           </RoundedBox>
+        ))}
+      </group>
+      <group ref={rightRef} position={[1.1, 0, 0]}>
+        {[0, 1, 2].map((i) => (
+           <RoundedBox key={i} args={[0.08, 0.2, 0.08]} radius={0.03} position={[i * 0.15, 0, 0]}>
+              <meshBasicMaterial color={color} toneMapped={false} />
+           </RoundedBox>
+        ))}
+      </group>
+    </group>
+  );
 }
