@@ -1,41 +1,41 @@
-# 🛍️ PARAK — Intelligent Shopping Assistant
+#  PARAK — Intelligent Shopping Assistant
 
 **PARAK** (پَرَک) is a full-stack **Retrieval-Augmented Generation (RAG)** chatbot built for e-commerce. It helps users discover products, search by text or image, ask store & FAQ questions, and interact via voice — all through a modern conversational UI.
 
 ---
 
-## 📸 Screenshots
+##  Screenshots
 
-### 👋 Welcome & Quick Actions
+###  Welcome & Quick Actions
 ![Welcome screen with AI avatar and suggested prompts](./frontend/public/images/%5BRAG1%5D.png)
 
-### 🎁 Product Recommendations & Details
+###  Product Recommendations & Details
 ![Chat with product cards and resizable product sidebar](./frontend/public/images/%5BRAG2%5D.png)
 
-### 📷 Visual / Image Search
+###  Visual / Image Search
 ![Upload a photo to find similar products in the catalog](./frontend/public/images/%5BRAG3%5D.png)
 
-### 🏪 Store Info & FAQ (Multilingual)
+###  Store Info & FAQ (Multilingual)
 ![Persian conversation about store hours and return policy](./frontend/public/images/%5BRAG4%5D.png)
 
 ---
 
-## ✨ Highlights
+##  Highlights
 
 | Feature | Description |
 |---------|-------------|
-| 🔍 **Multimodal RAG** | Text + image search powered by CLIP embeddings in Qdrant |
-| 🧠 **Smart Intent Routing** | LLM detects whether the user wants products, store info, or FAQ |
-| 🎙️ **Voice Chat** | Browser VAD → Whisper STT → RAG → Edge-TTS with 50+ language voices |
-| 🤖 **3D AI Avatar** | React Three Fiber avatar with context-aware emotions |
-| 📦 **Product Sidebar** | Resizable panel with variants, pricing, and images |
-| 💬 **Session Management** | Persistent chat history, search, pin, and rename sessions |
-| 🔐 **Auth & Profiles** | JWT login, email verification, avatar upload |
-| ⚙️ **Admin Ingestion** | Web UI to embed products, store, and FAQ into Qdrant |
+|  **Multimodal RAG** | Text + image search powered by CLIP embeddings in Qdrant |
+|  **Smart Intent Routing** | LLM detects whether the user wants products, store info, or FAQ |
+|  **Voice Chat** | Browser VAD → Whisper STT → RAG → Edge-TTS with 50+ language voices |
+|  **3D AI Avatar** | React Three Fiber avatar with context-aware emotions |
+|  **Product Sidebar** | Resizable panel with variants, pricing, and images |
+|  **Session Management** | Persistent chat history, search, pin, and rename sessions |
+|  **Auth & Profiles** | JWT login, email verification, avatar upload |
+|  **Admin Ingestion** | Web UI to embed products, store, and FAQ into Qdrant |
 
 ---
 
-## 🏗️ Architecture
+##  Architecture
 
 ```mermaid
 flowchart TB
@@ -94,9 +94,9 @@ flowchart TB
 
 ---
 
-## 🛠️ Tech Stack
+##  Tech Stack
 
-### ⚙️ Backend
+###  Backend
 - **FastAPI** — REST API, multipart uploads, background ingestion
 - **SQLAlchemy + SQLite** — users, sessions, messages, store/FAQ metadata
 - **Qdrant** — vector search with score thresholds and category filters
@@ -106,7 +106,7 @@ flowchart TB
 - **edge-tts** — neural text-to-speech (read-aloud & voice replies)
 - **PyTorch** — CLIP inference (CPU or CUDA)
 
-### 🎨 Frontend
+###  Frontend
 - **Next.js 14** (App Router) + **TypeScript**
 - **Tailwind CSS** + **Radix UI** + **shadcn/ui**
 - **React Three Fiber / drei** — 3D AI avatar
@@ -117,7 +117,7 @@ flowchart TB
 
 ---
 
-## 📁 Project Structure
+##  Project Structure
 
 ```
 .
@@ -158,7 +158,7 @@ flowchart TB
 
 ---
 
-## 🚀 Getting Started
+##  Getting Started
 
 ### 1️⃣ Clone & enter the project
 
@@ -274,29 +274,29 @@ curl -X POST "http://localhost:8000/api/ingest/store-faq" \
 
 ---
 
-## 📖 Usage Guide
+##  Usage Guide
 
-### 💬 Text Chat
+###  Text Chat
 Type a message or pick a suggested prompt. PARAK routes your question to the right knowledge base and returns a grounded answer with product cards when relevant.
 
-### 🖼️ Image Search
+###  Image Search
 Click the **image icon** in the input bar, upload a photo, and ask e.g. *"Do you have such a jacket?"* — CLIP finds visually similar products.
 
-### 🎤 Voice Chat
+###  Voice Chat
 Click the **waveform icon** to activate voice mode. The browser VAD detects when you speak; audio is sent to Whisper, processed through RAG, and the reply is spoken back via TTS.
 
-### 📦 Product Sidebar
+###  Product Sidebar
 Click any product card to open the **resizable sidebar** with full details, images, and SKU variants (color, size, price).
 
-### 🔊 Read Aloud
+###  Read Aloud
 Use the **speaker icon** on any assistant message to hear it in a language-matched neural voice.
 
-### 🌍 Multilingual
+###  Multilingual
 PARAK handles **Persian**, **English**, **Turkish**, and 50+ other languages for both chat and TTS.
 
 ---
 
-## 🔌 API Overview
+##  API Overview
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -317,7 +317,7 @@ Full interactive docs at `/docs` when the backend is running.
 
 ---
 
-## ⚙️ Configuration Reference
+##  Configuration Reference
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -332,7 +332,7 @@ Full interactive docs at `/docs` when the backend is running.
 
 ---
 
-## 🧪 Development Notes
+##  Development Notes
 
 - **First startup** preloads CLIP and Whisper models — this can take several minutes on a cold download.
 - **SQLite migrations** run automatically on startup (adds missing columns for products, email, avatar fields).
@@ -342,13 +342,13 @@ Full interactive docs at `/docs` when the backend is running.
 
 ---
 
-## 📄 License
+##  License
 
 This project is for educational and demonstration purposes. Product data format is based on AliExpress-style JSON exports. Ensure you have rights to any data you ingest.
 
 ---
 
-## 🙏 Acknowledgments
+##  Acknowledgments
 
 - [OpenAI CLIP](https://github.com/openai/CLIP) via HuggingFace Transformers
 - [Qdrant](https://qdrant.tech/) vector database
