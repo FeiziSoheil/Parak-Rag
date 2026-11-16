@@ -6,6 +6,7 @@ import logging
 import re
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -16,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
 from app.config import VOICE_TEMP_DIR
-from app.core.database import get_db, SessionLocal
+from app.core.database import get_db
 from app.models.user import User
 from app.models.session import ChatSession
 from app.models.message import Message
@@ -38,6 +39,8 @@ from app.services.rag import (
     detect_language_with_llm,
     detect_emotion_with_llm,
 )
+from app.services.checkout_state import load_checkout_state
+from app.services.commerce_actions import detect_commerce_action, execute_commerce_action
 from app.services.stt import transcribe_audio
 from app.services.tts import text_to_speech_to_bytes
 
@@ -177,37 +180,127 @@ def _get_last_shown_products(db: Session, session_id: int) -> list[dict]:
     return out
 
 
+@dataclass
+class ChatTurnResult:
+    message: str
+    products: list
+    suggested_emotion: str
+    cart_updated: bool = False
+    order: dict | None = None
+    checkout_phase: str | None = None
+
+
+def _parse_product_list(raw: str | None) -> list[dict]:
+    if not raw or not raw.strip():
+        return []
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if not isinstance(data, list):
+        return []
+    return [item for item in data if isinstance(item, dict)]
+
+
+def _parse_product_object(raw: str | None) -> dict | None:
+    if not raw or not raw.strip():
+        return None
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _persist_turn(db: Session, session: ChatSession, user_text: str, assistant_text: str, products: list | None) -> None:
+    db.add(Message(session_id=session.id, role="user", content=user_text, image_url=None))
+    db.add(
+        Message(
+            session_id=session.id,
+            role="assistant",
+            content=assistant_text,
+            products=json.dumps(products) if products else None,
+        )
+    )
+    if session.title == "New Chat" and user_text:
+        session.title = user_text[:100] + ("..." if len(user_text) > 100 else "")
+    db.commit()
+
+
+def _chat_payload(result: ChatTurnResult) -> dict:
+    return {
+        "message": result.message,
+        "products": result.products,
+        "suggested_emotion": result.suggested_emotion,
+        "cart_updated": result.cart_updated,
+        "order": result.order,
+        "checkout_phase": result.checkout_phase,
+    }
+
+
 async def _run_chat_response(
     db: Session,
-    session_id: int,
-    effective_message: str,
+    session: ChatSession,
+    user_id: int,
+    user_text: str,
     image_bytes: bytes | None = None,
     top_k: int | None = None,
     price_max: float | None = None,
     category: str | None = None,
-) -> tuple[str, list]:
-    """
-    Run RAG pipeline and save user/assistant messages. Returns (full_text, products).
-    Shared by POST /chat and POST /voice-chat.
-    """
+    attached_products: list[dict] | None = None,
+    sidebar_product: dict | None = None,
+) -> ChatTurnResult:
     loop = asyncio.get_event_loop()
-    user_text = None if effective_message == "(user sent an image)" else (effective_message or None)
+    attached_products = attached_products or []
+    phase = load_checkout_state(session.checkout_state)["phase"]
+    search_text = None if user_text == "(user sent an image)" else (user_text or None)
 
-    # Use LLM-based intent detection instead of keyword matching
+    if not image_bytes:
+        action = await loop.run_in_executor(
+            _executor,
+            lambda text=user_text, current=phase: detect_commerce_action(text, current),
+        )
+        if action.get("action") != "none":
+            turn = execute_commerce_action(
+                db,
+                user_id,
+                session,
+                action,
+                attached_products=attached_products,
+                sidebar_product=sidebar_product,
+            )
+            emotion = await loop.run_in_executor(
+                _executor,
+                lambda: detect_emotion_with_llm(user_text, turn.message),
+            )
+            if not emotion:
+                emotion = "neutral"
+            _persist_turn(db, session, user_text, turn.message, products=None)
+            return ChatTurnResult(
+                message=turn.message,
+                products=[],
+                suggested_emotion=emotion,
+                cart_updated=turn.cart_updated,
+                order=turn.order,
+                checkout_phase=turn.checkout_phase,
+            )
+
     intent_type = "product_search"
     if image_bytes:
         do_product_search = True
     else:
         intent_result = await loop.run_in_executor(
             _executor,
-            lambda: detect_intent_with_llm(user_text),
+            lambda text=search_text: detect_intent_with_llm(text),
         )
         do_product_search = intent_result.get("needs_qdrant_search", False)
         intent_type = intent_result.get("intent_type", "unknown")
 
-    # Store/FAQ questions should not trigger product search or product cards
     include_products = do_product_search and intent_type not in ("store_info", "faq")
-    
+    rag_message = user_text
+    if attached_products:
+        rag_message = _format_product_context(attached_products) + user_text
+
     if do_product_search:
         search_results: list[dict] = []
         products: list[dict] = []
@@ -215,16 +308,16 @@ async def _run_chat_response(
             if image_bytes:
                 search_results = await loop.run_in_executor(
                     _executor,
-                    lambda: run_embed_and_search(
-                        user_text, image_bytes, top_k=top_k, price_max=price_max, category=category
+                    lambda text=search_text: run_embed_and_search(
+                        text, image_bytes, top_k=top_k, price_max=price_max, category=category
                     ),
                 )
             else:
-                last_shown = _get_last_shown_products(db, session_id)
+                last_shown = _get_last_shown_products(db, session.id)
                 enhanced = await loop.run_in_executor(
                     _executor,
-                    lambda: enhanced_search_with_llm(
-                        user_query=user_text or "",
+                    lambda text=search_text: enhanced_search_with_llm(
+                        user_query=text or "",
                         limit=top_k or 3,
                         price_max=price_max,
                         category=category,
@@ -232,66 +325,55 @@ async def _run_chat_response(
                     ),
                 )
                 search_results = enhanced["results"]
-            if not is_broad_products_query(user_text):
+            if not is_broad_products_query(search_text):
                 search_results = filter_search_results_by_min_score(search_results)
             products = products_from_search_results(search_results)
         query_vector = await loop.run_in_executor(
             _executor,
-            lambda: get_query_vector(user_text, image_bytes),
+            lambda text=search_text: get_query_vector(text, image_bytes),
         )
         store_results = await loop.run_in_executor(
             _executor,
-            lambda: search_store(query_vector, top_k=3),
+            lambda vector=query_vector: search_store(vector, top_k=3),
         )
         faq_results = await loop.run_in_executor(
             _executor,
-            lambda: search_faq(query_vector, top_k=5),
+            lambda vector=query_vector: search_faq(vector, top_k=5),
         )
         context = build_combined_context(store_results, faq_results, search_results)
     else:
         context = "No relevant products found."
         products = []
 
-    history = get_chat_history(db, session_id)
+    history = get_chat_history(db, session.id)
     search_by_image = image_bytes is not None
     try:
         full_text = await loop.run_in_executor(
             _executor,
-            lambda: run_rag_response(context, history, effective_message, search_by_image=search_by_image),
+            lambda: run_rag_response(context, history, rag_message, search_by_image=search_by_image),
         )
-    except Exception as e:
-        _raise_llm_http_error(e)
+    except Exception as exc:
+        _raise_llm_http_error(exc)
 
-    # Reorder product cards to match the order they're mentioned in the LLM response
     if products and full_text:
         products = reorder_products_by_mention(full_text, products)
 
     suggested_emotion = await loop.run_in_executor(
         _executor,
-        lambda: detect_emotion_with_llm(effective_message, full_text),
+        lambda: detect_emotion_with_llm(user_text, full_text),
     )
     if suggested_emotion is None:
         suggested_emotion = "neutral"
 
-    db2 = SessionLocal()
-    try:
-        user_msg = Message(session_id=session_id, role="user", content=effective_message, image_url=None)
-        db2.add(user_msg)
-        assistant_msg = Message(
-            session_id=session_id,
-            role="assistant",
-            content=full_text,
-            products=json.dumps(products) if products else None,
-        )
-        db2.add(assistant_msg)
-        sess = db2.query(ChatSession).filter(ChatSession.id == session_id).first()
-        if sess and sess.title == "New Chat" and effective_message:
-            sess.title = effective_message[:100] + ("..." if len(effective_message) > 100 else "")
-        db2.commit()
-    finally:
-        db2.close()
-
-    return full_text, products, suggested_emotion
+    _persist_turn(db, session, user_text, full_text, products)
+    return ChatTurnResult(
+        message=full_text,
+        products=products,
+        suggested_emotion=suggested_emotion,
+        cart_updated=False,
+        order=None,
+        checkout_phase=phase,
+    )
 
 
 # دامنه‌های مجاز برای پروکسی تصویر (جلوگیری از abuse)
@@ -549,6 +631,8 @@ async def chat(
     top_k: int | None = Form(None, description="تعداد نتایج RAG (خالی = مقدار پیش‌فرض سرور)"),
     price_max: float | None = Form(None, description="حداکثر قیمت (فیلتر اختیاری)"),
     category: str | None = Form(None, description="دسته‌بندی (فیلتر اختیاری، تطبیق دقیق با category_name)"),
+    selected_products: str | None = Form(None),
+    sidebar_product: str | None = Form(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -564,19 +648,28 @@ async def chat(
     if top_k is not None and (top_k < 1 or top_k > 100):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="top_k must be between 1 and 100")
 
-    effective_message = message.strip() or "(user sent an image)"
-    full_text, products, suggested_emotion = await _run_chat_response(
-        db, session_id, effective_message,
-        image_bytes=image_bytes, top_k=top_k, price_max=price_max, category=category,
+    user_text = message.strip() or "(user sent an image)"
+    result = await _run_chat_response(
+        db,
+        session,
+        current_user.id,
+        user_text,
+        image_bytes=image_bytes,
+        top_k=top_k,
+        price_max=price_max,
+        category=category,
+        attached_products=_parse_product_list(selected_products),
+        sidebar_product=_parse_product_object(sidebar_product),
     )
-    return {"message": full_text, "products": products, "suggested_emotion": suggested_emotion}
+    return _chat_payload(result)
 
 
 @router.post("/voice-chat")
 async def voice_chat(
     session_id: int = Form(...),
     voice: UploadFile = File(..., description="Audio file (e.g. webm, mp3, wav)"),
-    selected_products: str | None = Form(None, description="JSON array of selected products (product_id, subject, price, category_name)"),
+    selected_products: str | None = Form(None),
+    sidebar_product: str | None = Form(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -592,16 +685,6 @@ async def voice_chat(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
     if not voice.filename:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="voice file required")
-
-    # Parse selected products if provided
-    attached_products: list[dict] = []
-    if selected_products and selected_products.strip():
-        try:
-            attached_products = json.loads(selected_products)
-            if not isinstance(attached_products, list):
-                attached_products = []
-        except (json.JSONDecodeError, TypeError):
-            attached_products = []
 
     VOICE_TEMP_DIR.mkdir(parents=True, exist_ok=True)
     suffix = Path(voice.filename).suffix or ".webm"
@@ -633,35 +716,28 @@ async def voice_chat(
             detail="No speech detected. Please try again with a clearer recording.",
         )
 
-    # Build effective message with product context if products are selected
-    transcribed_text = text.strip()
-    if attached_products:
-        product_context = _format_product_context(attached_products)
-        effective_message = product_context + transcribed_text
-    else:
-        effective_message = transcribed_text
-
-    full_text, products, suggested_emotion = await _run_chat_response(
-        db, session_id, effective_message, image_bytes=None,
+    user_text = text.strip()
+    result = await _run_chat_response(
+        db,
+        session,
+        current_user.id,
+        user_text,
+        image_bytes=None,
+        attached_products=_parse_product_list(selected_products),
+        sidebar_product=_parse_product_object(sidebar_product),
     )
-
+    payload = _chat_payload(result)
+    payload["transcribed_text"] = user_text
     audio_base64 = None
     try:
-        audio_bytes = await text_to_speech_to_bytes(full_text)
+        audio_bytes = await text_to_speech_to_bytes(result.message)
         if audio_bytes:
             audio_base64 = base64.b64encode(audio_bytes).decode("ascii")
     except Exception:
         pass
-
-    response = {
-        "message": full_text,
-        "products": products,
-        "suggested_emotion": suggested_emotion,
-        "transcribed_text": text.strip(),
-    }
     if audio_base64 is not None:
-        response["audio_base64"] = audio_base64
-    return response
+        payload["audio_base64"] = audio_base64
+    return payload
 
 
 @router.post("/read-aloud")
