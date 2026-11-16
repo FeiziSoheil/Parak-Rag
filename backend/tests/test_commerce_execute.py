@@ -7,6 +7,7 @@ from app.models.session import ChatSession
 from app.services.checkout_state import load_checkout_state
 from app.services.commerce import CommerceError
 from app.services.commerce_actions import (
+    detect_commerce_action,
     execute_commerce_action,
     load_recent_product_cards,
     normalize_commerce_action,
@@ -103,7 +104,7 @@ def test_ambiguous_add_and_missing_variant_do_not_mutate(db_session, user_a):
         db_session,
         user_a,
         session,
-        {"action": "cart_add", "product_ref": {"hint": "first"}},
+        {"action": "cart_add", "product_ref": {"hint": "this"}},
         recent=[MUG, CUP],
     )
     assert vague.cart_updated is False
@@ -263,3 +264,83 @@ def test_confirm_places_pending_order_then_cancel_keeps_cart(db_session, user_a)
     assert cancelled.checkout_phase == "idle"
     assert db_session.query(CartItem).filter(CartItem.user_id == user_a.id).count() == 1
     assert db_session.query(Order).count() == 1
+
+
+def _shown_shoes():
+    return [
+        {"product_id": 11, "subject": "Trail Shoe", "price": 30.0, "image_url": None, "category_name": "Shoes", "variants": []},
+        {"product_id": 22, "subject": "Court Shoe", "price": 40.0, "image_url": None, "category_name": "Shoes", "variants": []},
+        {"product_id": 33, "subject": "Road Shoe", "price": 50.0, "image_url": None, "category_name": "Shoes", "variants": []},
+    ]
+
+
+def test_order_second_shown_product_starts_checkout_without_placing(db_session, user_a):
+    session = _session(db_session, user_a)
+    action = detect_commerce_action(
+        "این دومی رو سفارش بده",
+        "idle",
+        complete=lambda prompt: '{"action":"none"}',
+    )
+    turn = _run(db_session, user_a, session, action, recent=_shown_shoes())
+    assert turn.order is None
+    assert turn.cart_updated is True
+    assert turn.checkout_phase == "collecting"
+    assert "Court Shoe" in turn.message
+    assert "Who should receive this order?" in turn.message
+    item = db_session.query(CartItem).filter(CartItem.user_id == user_a.id).one()
+    assert item.product_id == 22
+    blocked = _run(db_session, user_a, session, {"action": "order_confirm"})
+    assert blocked.order is None
+    assert blocked.message == "I can place the order only after you review the summary and reply yes."
+    assert db_session.query(Order).count() == 0
+
+
+def test_add_first_size_40_clarifies_only_that_size(db_session, user_a):
+    variants = []
+    for color in ("PURPLE", "BLACK", "WHITE"):
+        for size in ("36", "39", "40", "41", "45"):
+            variants.append(
+                {
+                    "price": 18.0,
+                    "attributes": [
+                        {"name": "Color", "value": color},
+                        {"name": "Size", "value": size},
+                    ],
+                }
+            )
+    shoes = [
+        {
+            "product_id": 77,
+            "subject": "Trail Shoe",
+            "price": 18.0,
+            "image_url": None,
+            "category_name": "Shoes",
+            "variants": variants,
+        },
+        {
+            "product_id": 78,
+            "subject": "Other Shoe",
+            "price": 19.0,
+            "image_url": None,
+            "category_name": "Shoes",
+            "variants": [],
+        },
+    ]
+    session = _session(db_session, user_a)
+    action = detect_commerce_action(
+        "همین اولی رو با سایز 40 به سبدم اضافه کن",
+        "idle",
+        complete=lambda prompt: '{"action":"none"}',
+    )
+    turn = _run(db_session, user_a, session, action, recent=shoes)
+    assert turn.cart_updated is False
+    assert turn.order is None
+    assert "Which variant of Trail Shoe should I add?" in turn.message
+    assert "Size: 40" in turn.message
+    assert "Size: 36" not in turn.message
+    assert "Size: 39" not in turn.message
+    assert "Size: 41" not in turn.message
+    assert "Size: 45" not in turn.message
+    assert turn.message.count("Size: 40") == 3
+    assert db_session.query(CartItem).filter(CartItem.user_id == user_a.id).count() == 0
+    assert db_session.query(Order).count() == 0

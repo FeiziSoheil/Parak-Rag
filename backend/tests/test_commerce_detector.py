@@ -20,6 +20,47 @@ def test_garbage_json_is_none():
     assert action["action"] == "none"
 
 
+def test_persian_order_second_is_checkout_without_llm():
+    def complete(prompt: str) -> str:
+        raise AssertionError("llm should not be required")
+
+    action = detect_commerce_action("این دومی رو سفارش بده", "idle", complete=complete)
+    assert action["action"] == "checkout_start"
+    assert action["product_ref"]["hint"] == "second"
+    assert action["confirm"] is False
+
+
+def test_persian_add_first_with_size_is_cart_add():
+    action = detect_commerce_action(
+        "همین اولی رو با سایز ۴۰ به سبدم اضافه کن Men's Trail Shoe",
+        "idle",
+        complete=lambda prompt: '{"action":"none"}',
+    )
+    assert action["action"] == "cart_add"
+    assert action["product_ref"]["hint"] == "first"
+    assert action["product_ref"]["variant_label"] == "Size: 40"
+    assert action["confirm"] is False
+
+
+def test_english_order_the_second_one():
+    action = detect_commerce_action(
+        "order the second one",
+        "idle",
+        complete=lambda prompt: '{"action":"none"}',
+    )
+    assert action["action"] == "checkout_start"
+    assert action["product_ref"]["hint"] == "second"
+
+
+def test_add_the_blue_one_still_uses_llm():
+    def complete(prompt: str) -> str:
+        return '{"action":"cart_add","product_ref":{"hint":"blue","variant_label":null}}'
+
+    action = detect_commerce_action("add the blue one", "idle", complete=complete)
+    assert action["action"] == "cart_add"
+    assert action["product_ref"]["hint"] == "blue"
+
+
 def test_collecting_prompt_prefers_checkout_over_search():
     seen = {}
 

@@ -9,6 +9,7 @@ from app.api import chat as chat_api
 from app.api import orders as orders_api
 from app.core.database import get_db
 from app.models.cart import CartItem
+from app.models.message import Message
 from app.models.order import Order
 from app.models.session import ChatSession
 from app.services.checkout_state import dump_checkout_state, empty_state, load_checkout_state
@@ -228,3 +229,94 @@ def test_image_turn_skips_commerce(chat_client, db_session, user_a, auth_header_
     assert response.status_code == 200
     assert response.json()["message"] == "similar products"
     assert response.json()["cart_updated"] is False
+
+
+def _block_rag(monkeypatch):
+    def fail(*args, **kwargs):
+        raise AssertionError("fell through to rag")
+
+    monkeypatch.setattr(chat_api, "detect_intent_with_llm", fail)
+    monkeypatch.setattr(chat_api, "enhanced_search_with_llm", fail)
+    monkeypatch.setattr(chat_api, "run_rag_response", fail)
+    monkeypatch.setattr(
+        "app.services.commerce_actions._llm_complete",
+        lambda prompt: '{"action":"none"}',
+    )
+
+
+def test_chat_order_second_shown_card_does_not_search(chat_client, db_session, user_a, auth_header_a, monkeypatch):
+    session = _session(db_session, user_a)
+    shoes = [
+        {"product_id": 11, "subject": "Trail Shoe", "price": 30, "image_url": None, "category_name": "Shoes", "variants": []},
+        {"product_id": 22, "subject": "Court Shoe", "price": 40, "image_url": None, "category_name": "Shoes", "variants": []},
+        {"product_id": 33, "subject": "Road Shoe", "price": 50, "image_url": None, "category_name": "Shoes", "variants": []},
+    ]
+    db_session.add(Message(session_id=session.id, role="assistant", content="shoes", products=json.dumps(shoes)))
+    db_session.commit()
+    _patch_quiet(monkeypatch)
+    _block_rag(monkeypatch)
+    response = chat_client.post(
+        "/api/chat",
+        data={"session_id": str(session.id), "message": "این دومی رو سفارش بده"},
+        headers=auth_header_a,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["cart_updated"] is True
+    assert body["order"] is None
+    assert body["checkout_phase"] == "collecting"
+    assert "Court Shoe" in body["message"]
+    item = db_session.query(CartItem).filter(CartItem.user_id == user_a.id).one()
+    assert item.product_id == 22
+    assert db_session.query(Order).count() == 0
+
+
+def test_chat_add_first_size_filters_variants(chat_client, db_session, user_a, auth_header_a, monkeypatch):
+    session = _session(db_session, user_a)
+    variants = []
+    for color in ("PURPLE", "BLACK"):
+        for size in ("39", "40"):
+            variants.append(
+                {
+                    "price": 18,
+                    "attributes": [
+                        {"name": "Color", "value": color},
+                        {"name": "Size", "value": size},
+                    ],
+                }
+            )
+    shoes = [
+        {
+            "product_id": 77,
+            "subject": "Trail Shoe",
+            "price": 18,
+            "image_url": None,
+            "category_name": "Shoes",
+            "variants": variants,
+        },
+        {
+            "product_id": 78,
+            "subject": "Other Shoe",
+            "price": 19,
+            "image_url": None,
+            "category_name": "Shoes",
+            "variants": [],
+        },
+    ]
+    db_session.add(Message(session_id=session.id, role="assistant", content="shoes", products=json.dumps(shoes)))
+    db_session.commit()
+    _patch_quiet(monkeypatch)
+    _block_rag(monkeypatch)
+    response = chat_client.post(
+        "/api/chat",
+        data={"session_id": str(session.id), "message": "همین اولی رو با سایز 40 به سبدم اضافه کن"},
+        headers=auth_header_a,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["cart_updated"] is False
+    assert body["order"] is None
+    assert "Size: 39" not in body["message"]
+    assert body["message"].count("Size: 40") == 2
+    assert "PURPLE" in body["message"] and "BLACK" in body["message"]
+    assert db_session.query(CartItem).count() == 0
