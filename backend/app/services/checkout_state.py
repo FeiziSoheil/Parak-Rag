@@ -94,3 +94,14 @@ def ready_to_confirm(state: dict) -> bool:
 
 def mark_idle() -> dict:
     return empty_state()
+
+
+from sqlalchemy import text
+
+
+def ensure_checkout_state_column(connection) -> None:
+    rows = connection.execute(text("PRAGMA table_info(chat_sessions)"))
+    cols = [row[1] for row in rows]
+    if "checkout_state" not in cols:
+        connection.execute(text("ALTER TABLE chat_sessions ADD COLUMN checkout_state TEXT"))
+        connection.commit()

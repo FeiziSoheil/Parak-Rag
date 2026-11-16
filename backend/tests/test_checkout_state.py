@@ -110,3 +110,56 @@ def test_advance_phase_never_blocks_on_note():
     )
     assert state["phase"] == "awaiting_confirm"
     assert state["next_slot"] is None
+
+
+from sqlalchemy import create_engine, text
+from sqlalchemy.pool import StaticPool
+
+from app.models.session import ChatSession
+from app.services.checkout_state import (
+    dump_checkout_state,
+    empty_state,
+    ensure_checkout_state_column,
+    load_checkout_state,
+)
+
+
+def test_ensure_checkout_state_column_adds_and_is_idempotent():
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE chat_sessions ("
+                "id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, title VARCHAR(512))"
+            )
+        )
+    with engine.connect() as conn:
+        ensure_checkout_state_column(conn)
+        cols = [row[1] for row in conn.execute(text("PRAGMA table_info(chat_sessions)"))]
+        assert "checkout_state" in cols
+        ensure_checkout_state_column(conn)
+        cols_again = [row[1] for row in conn.execute(text("PRAGMA table_info(chat_sessions)"))]
+        assert cols_again.count("checkout_state") == 1
+
+
+def test_chat_session_persists_checkout_state(db_session, user_a):
+    raw = dump_checkout_state(
+        {
+            **empty_state(),
+            "phase": "collecting",
+            "recipient_name": "Ada",
+            "next_slot": "phone",
+        }
+    )
+    row = ChatSession(user_id=user_a.id, title="New Chat", checkout_state=raw)
+    db_session.add(row)
+    db_session.commit()
+    db_session.refresh(row)
+    loaded = load_checkout_state(row.checkout_state)
+    assert loaded["phase"] == "collecting"
+    assert loaded["recipient_name"] == "Ada"
+    assert loaded["next_slot"] == "phone"

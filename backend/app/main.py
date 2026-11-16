@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 from app.core.database import engine, Base
+from app.services.checkout_state import ensure_checkout_state_column
 from app.models import User, ChatSession, Message, StoreInfo, FAQ, CartItem, Order, OrderItem  # noqa: F401 - ensure all tables registered
 from app.api import auth, chat, ingest, search as search_api, settings as settings_api, cart as cart_api, orders as orders_api
 
@@ -20,6 +21,14 @@ def _ensure_products_column():
         if "products" not in cols:
             conn.execute(text("ALTER TABLE messages ADD COLUMN products TEXT"))
             conn.commit()
+
+
+def _ensure_checkout_state_column():
+    """Add chat_sessions.checkout_state if missing (existing SQLite files)."""
+    if "sqlite" not in str(engine.url):
+        return
+    with engine.connect() as conn:
+        ensure_checkout_state_column(conn)
 
 
 def _ensure_user_email_columns():
@@ -61,6 +70,7 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     _ensure_products_column()
     _ensure_user_email_columns()
+    _ensure_checkout_state_column()
 
     # Clear voice temp dir on startup (safety net for leftover files after crash/power loss)
     if VOICE_TEMP_DIR.exists():
