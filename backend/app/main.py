@@ -6,8 +6,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 from app.core.database import engine, Base
-from app.models import User, ChatSession, Message, StoreInfo, FAQ  # noqa: F401 - ensure all tables registered
-from app.api import auth, chat, ingest, search as search_api, settings as settings_api
+from app.models import User, ChatSession, Message, StoreInfo, FAQ, CartItem, Order, OrderItem  # noqa: F401 - ensure all tables registered
+from app.api import auth, chat, ingest, search as search_api, settings as settings_api, cart as cart_api, orders as orders_api
 
 
 def _ensure_products_column():
@@ -127,3 +127,5 @@ app.include_router(chat.router, prefix="/api", tags=["chat", "sessions"])
 app.include_router(ingest.router, prefix="/api", tags=["ingest"])
 app.include_router(search_api.router, prefix="/api", tags=["search"])
 app.include_router(settings_api.router, prefix="/api", tags=["settings"])
+app.include_router(cart_api.router, prefix="/api", tags=["cart"])
+app.include_router(orders_api.router, prefix="/api", tags=["orders"])
