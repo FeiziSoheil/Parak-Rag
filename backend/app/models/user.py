@@ -19,3 +19,5 @@ class User(Base):
     avatar_url = Column(String(512), nullable=True)
 
     sessions = relationship("ChatSession", back_populates="user")
+    cart_items = relationship("CartItem", back_populates="user")
+    orders = relationship("Order", back_populates="user")
