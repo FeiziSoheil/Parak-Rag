@@ -27,6 +27,21 @@ def _clean_stored(value) -> str | None:
     return value or None
 
 
+def clean_pending_add(value) -> dict | None:
+    if not isinstance(value, dict):
+        return None
+    try:
+        product_id = int(value.get("product_id"))
+    except (TypeError, ValueError):
+        return None
+    action = value.get("action")
+    if action not in ("cart_add", "checkout_start"):
+        action = "cart_add"
+    hint = value.get("hint")
+    hint = hint.strip() if isinstance(hint, str) and hint.strip() else None
+    return {"product_id": product_id, "action": action, "hint": hint}
+
+
 def load_checkout_state(raw: str | None) -> dict:
     state = empty_state()
     if raw is None or not str(raw).strip():
@@ -43,12 +58,18 @@ def load_checkout_state(raw: str | None) -> dict:
         state[key] = _clean_stored(data.get(key))
     next_slot = data.get("next_slot")
     state["next_slot"] = next_slot if next_slot in NEXT_SLOTS else None
+    pending = clean_pending_add(data.get("pending_add"))
+    if pending:
+        state["pending_add"] = pending
     return state
 
 
 def dump_checkout_state(state: dict) -> str:
     payload = empty_state()
     payload.update({key: state.get(key) for key in payload})
+    pending = clean_pending_add(state.get("pending_add"))
+    if pending:
+        payload["pending_add"] = pending
     return json.dumps(payload, ensure_ascii=False)
 
 

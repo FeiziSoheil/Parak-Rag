@@ -151,6 +151,19 @@ def test_size_constraint_lists_only_matching_variants():
     ]
 
 
+def test_persian_purple_and_size_selects_that_variant():
+    resolved = resolve_product_for_cart(
+        [],
+        None,
+        [SHOE, CUP],
+        {"hint": "first", "product_id": None, "variant_label": "Color: بنفش · Size: 40"},
+    )
+    assert resolved.status == "selected"
+    assert resolved.product["product_id"] == 404
+    assert resolved.product["variant_label"] == "Color: PURPLE · Size: 40"
+    assert resolved.product["unit_price"] == 21.0
+
+
 def test_unique_persian_size_selects_that_variant():
     shoe = {
         **SHOE,

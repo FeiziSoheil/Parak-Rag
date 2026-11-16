@@ -9,6 +9,7 @@ from app.schemas.cart import CartItemCreate
 from app.schemas.order import OrderCreate
 from app.services.checkout_state import (
     begin_collecting,
+    clean_pending_add,
     dump_checkout_state,
     fill_slots,
     load_checkout_state,
@@ -147,8 +148,9 @@ _ORDINAL_PATTERNS = (
     (re.compile(r"\bfifth\b|\b5th\b", re.IGNORECASE), "fifth"),
 )
 _ORDER_RE = re.compile(
-    r"سفارش(?:ش|شو)?(?:\s*(?:رو|را))?\s*(?:بده|بدید|بدین|کنید|کن)(?!\w)|"
-    r"می\s*خوام\s+سفارش|"
+    r"سفارش(?:ش|شو)?(?:\s*(?:رو|را))?\s*(?:بده(?:ید)?|بدید|بدین|کنید|کنم|کن|بدم)(?!\w)|"
+    r"می\s*خ(?:وا|واه)م\s+سفارش|"
+    r"سفارش\s*(?:می\s*دم|میدم)|"
     r"\border\s+(?:the|this|that|it|them)\b|"
     r"\bplace\s+(?:an?\s+)?order\b|"
     r"\bwant\s+to\s+order\b|"
@@ -163,6 +165,65 @@ _ADD_RE = re.compile(
     r"(?:اضافه|بذار|بگذار|بریز)(?:\s+\S+){0,4}\s*(?:به\s*)?سبد|"
     r"\badd(?:\s+\S+){0,6}\s+to\s+(?:my\s+)?cart\b",
     re.IGNORECASE,
+)
+_SELECTED_RE = re.compile(
+    r"محصول(?:ات)?\s*انتخاب|"
+    r"انتخاب\s*شده|"
+    r"selected\s+products",
+    re.IGNORECASE,
+)
+_DEICTIC_RE = re.compile(r"همین|همون|همینو|همونو|اینو|این\s*یکی")
+_ACCEPT_RE = re.compile(r"(?:^|[\s،,.])باشه(?:$|[\s،,.])|می\s*خ(?:وا|واه)م")
+_HOWTO_RE = re.compile(r"چطور|چگونه|چجوری|چطوری|how\s+(?:do|can|to)\b", re.IGNORECASE)
+_COLOR_ALIASES = {
+    "بنفش": ("purple", "violet"),
+    "ارغوانی": ("purple", "violet"),
+    "یاسی": ("lilac", "purple"),
+    "مشکی": ("black",),
+    "سیاه": ("black",),
+    "سفید": ("white",),
+    "قرمز": ("red",),
+    "سرخ": ("red",),
+    "آبی": ("blue",),
+    "ابی": ("blue",),
+    "سبز": ("green",),
+    "زرد": ("yellow",),
+    "صورتی": ("pink",),
+    "نارنجی": ("orange",),
+    "قهوه ای": ("brown", "coffee"),
+    "قهوهای": ("brown", "coffee"),
+    "قهوه": ("brown", "coffee"),
+    "خاکستری": ("gray", "grey"),
+    "طوسی": ("gray", "grey"),
+    "طلایی": ("gold",),
+    "نقره ای": ("silver",),
+    "نقره": ("silver",),
+    "کرم": ("cream", "beige"),
+    "بژ": ("beige",),
+    "سرمه ای": ("navy",),
+    "سرمه": ("navy",),
+}
+_ENGLISH_COLORS = (
+    "purple",
+    "violet",
+    "lilac",
+    "black",
+    "white",
+    "red",
+    "blue",
+    "green",
+    "yellow",
+    "pink",
+    "orange",
+    "brown",
+    "gray",
+    "grey",
+    "navy",
+    "beige",
+    "cream",
+    "gold",
+    "silver",
+    "coffee",
 )
 _SIZE_ATTR_RE = re.compile(r"size|سایز|اندازه|(?:^|\s)eu(?:\s|$)")
 _ORDINAL_HINTS = {"first", "second", "third", "fourth", "fifth"}
@@ -194,17 +255,38 @@ def _extract_size(text: str) -> str | None:
     return sizes[-1] if sizes else None
 
 
+def _color_tokens(color: str) -> list[str]:
+    folded = _fold_text(color).lower().strip()
+    tokens = [folded] if folded else []
+    aliases = _COLOR_ALIASES.get(folded) or _COLOR_ALIASES.get(folded.replace(" ", ""))
+    if aliases:
+        tokens.extend(alias.lower() for alias in aliases)
+    return tokens
+
+
+def _color_matches(color: str, blob: str) -> bool:
+    blob_l = _fold_text(blob).lower()
+    return any(
+        token and re.search(rf"(?<![\w]){re.escape(token)}(?![\w])", blob_l, re.IGNORECASE)
+        for token in _color_tokens(color)
+    )
+
+
 def _explicit_color(text: str) -> str | None:
     folded = _fold_text(text)
     match = re.search(r"رنگ\s*[:：]?\s*([^\s,،·|/]+)", folded)
     if not match:
         match = re.search(r"\bcolou?r\s*[:：]\s*([A-Za-z]+)", folded, re.IGNORECASE)
-    if not match:
-        return None
-    color = match.group(1).strip(" .:：")
-    if not color or color.isdigit() or color in {"size", "سایز"}:
-        return None
-    return color.lower()
+    if match:
+        color = match.group(1).strip(" .:：")
+        if color and not color.isdigit() and color.lower() not in {"size", "سایز"}:
+            return color.lower()
+    lowered = folded.lower()
+    names = sorted(_COLOR_ALIASES, key=len, reverse=True) + list(_ENGLISH_COLORS)
+    for name in names:
+        if re.search(rf"(?<![\w]){re.escape(name)}(?![\w])", lowered, re.IGNORECASE):
+            return name.lower()
+    return None
 
 
 def _extract_variant_label(message: str) -> str | None:
@@ -260,7 +342,7 @@ def _filter_variants(variants: list[dict], needle: str) -> list[dict]:
             continue
         if color is not None:
             blob = f"{_variant_color(variant)} {_fold_text(variant_label_of(variant))}"
-            if color not in blob:
+            if not _color_matches(color, blob):
                 continue
         hits.append(variant)
     return hits
@@ -281,19 +363,50 @@ def _variant_options(variants: list[dict]) -> list[str]:
     return [label for label in (variant_label_of(variant) for variant in variants) if label]
 
 
-def _rule_commerce_action(message: str) -> dict | None:
+def _is_choice(text: str, ordinal: str | None, variant_label: str | None) -> bool:
+    has_anchor = bool(ordinal) or bool(_DEICTIC_RE.search(text))
+    if not has_anchor:
+        return False
+    if _ACCEPT_RE.search(text):
+        return True
+    return bool(variant_label)
+
+
+def _variant_reply(text: str) -> bool:
+    folded = _fold_text(text).strip().lower()
+    if not folded:
+        return False
+    if not (_extract_size(folded) or _explicit_color(folded) or re.fullmatch(r"\d{1,3}", folded)):
+        return False
+    allowed = r"رنگ|سایز|اندازه|size|eu|colou?r|لطفا|باشه|همین|همون|اینو|این|رو|را|برای|هم|با"
+    color_alt = "|".join(re.escape(name) for name in sorted(_COLOR_ALIASES, key=len, reverse=True))
+    english = "|".join(_ENGLISH_COLORS)
+    pattern = rf"^(?:(?:{allowed}|{color_alt}|{english}|\d{{1,3}})|[\s·:：,،.|/+\-])+$"
+    return re.fullmatch(pattern, folded, flags=re.IGNORECASE) is not None
+
+
+def _rule_commerce_action(message: str, phase: str = "idle") -> dict | None:
     text = _fold_text(message)
+    if _HOWTO_RE.search(text):
+        return None
+    ordering = _ORDER_RE.search(text) is not None
+    adding = _ADD_RE.search(text) is not None
+    if phase in ("collecting", "awaiting_confirm") and not ordering and not adding:
+        return None
     ordinal = _ordinal_hint(text)
     variant_label = _extract_variant_label(text)
-    if _ORDER_RE.search(text):
+    if ordering:
         action_name = "checkout_start"
-    elif _ADD_RE.search(text) and (ordinal or variant_label):
+    elif adding:
+        action_name = "cart_add"
+    elif phase not in ("collecting", "awaiting_confirm") and _is_choice(text, ordinal, variant_label):
         action_name = "cart_add"
     else:
         return None
     return {
         "action": action_name,
         "quantity": 1,
+        "add_all": bool(_SELECTED_RE.search(text)) and _ordinal_index(ordinal or "") is None,
         "product_ref": {"hint": ordinal, "product_id": None, "variant_label": variant_label},
         "confirm": False,
         "cancel": False,
@@ -489,6 +602,7 @@ def normalize_commerce_action(data: dict | None) -> dict:
         "slots": slots,
         "confirm": confirm,
         "cancel": cancel,
+        "add_all": bool(raw.get("add_all")),
     }
 
 
@@ -581,16 +695,53 @@ def _targets_product(ref: dict | None) -> bool:
     return bool(isinstance(ref.get("hint"), str) and ref["hint"].strip())
 
 
+def _specific_product_ref(ref: dict | None) -> bool:
+    if not isinstance(ref, dict):
+        return False
+    if ref.get("product_id") is not None:
+        return True
+    hint = ref.get("hint") if isinstance(ref.get("hint"), str) else ""
+    return _ordinal_index(hint) is not None
+
+
 def _added_line(quantity: int, snap: dict) -> str:
     variant = f" ({snap['variant_label']})" if snap["variant_label"] else ""
     return f"Added {quantity} × {snap['subject']}{variant} to your cart."
 
 
-def _add_selected_product(db, user_id, session, action, attached, sidebar, recent, state):
-    resolved = resolve_product_for_cart(attached, sidebar, recent, action["product_ref"])
-    if resolved.status != "selected" or not resolved.product:
-        return _turn(_resolve_message(resolved), state), None, state
-    snap = resolved.product
+def _remember_pending(db, session, state, action, resolved) -> dict:
+    if resolved.status != "need_variant" or not resolved.candidates:
+        return state
+    product_id = resolved.candidates[0].get("product_id")
+    if product_id is None:
+        return state
+    name = action.get("action")
+    if name not in ("cart_add", "checkout_start"):
+        name = "cart_add"
+    hint = (action.get("product_ref") or {}).get("hint")
+    state = dict(state)
+    state["pending_add"] = {"product_id": int(product_id), "action": name, "hint": hint}
+    _save_state(db, session, state)
+    return load_checkout_state(session.checkout_state)
+
+
+def clear_pending_add(db, session) -> None:
+    state = load_checkout_state(session.checkout_state)
+    if not state.get("pending_add"):
+        return
+    state.pop("pending_add", None)
+    _save_state(db, session, state)
+
+
+def _clear_pending(db, session, state) -> dict:
+    if not state.get("pending_add"):
+        return state
+    state = {key: value for key, value in state.items() if key != "pending_add"}
+    _save_state(db, session, state)
+    return load_checkout_state(session.checkout_state)
+
+
+def _write_cart_snap(db, user_id, action, snap: dict) -> None:
     add_cart_item(
         db,
         user_id,
@@ -604,9 +755,40 @@ def _add_selected_product(db, user_id, session, action, attached, sidebar, recen
             quantity=action["quantity"],
         ),
     )
+
+
+def _add_selected_product(db, user_id, session, action, attached, sidebar, recent, state):
+    ref = action["product_ref"]
+    attached_cards = [card for card in (_as_candidate(item) for item in (attached or [])) if card]
+    use_all = bool(attached_cards) and (
+        action.get("add_all")
+        or (len(attached_cards) > 1 and not _specific_product_ref(ref) and not (ref.get("variant_label") or "").strip())
+    )
+    if use_all:
+        resolved_rows = []
+        for card in attached_cards:
+            one_ref = {"hint": None, "product_id": card["product_id"], "variant_label": ref.get("variant_label")}
+            resolved = resolve_product_for_cart([card], None, [], one_ref)
+            if resolved.status != "selected" or not resolved.product:
+                if resolved.status == "need_variant":
+                    state = _remember_pending(db, session, state, action, resolved)
+                return _turn(_resolve_message(resolved), state), [], state
+            resolved_rows.append(resolved)
+        for resolved in resolved_rows:
+            _write_cart_snap(db, user_id, action, resolved.product)
+        db.refresh(session)
+        state = _clear_pending(db, session, load_checkout_state(session.checkout_state))
+        return None, [resolved.product for resolved in resolved_rows], state
+
+    resolved = resolve_product_for_cart(attached, sidebar, recent, ref)
+    if resolved.status != "selected" or not resolved.product:
+        if resolved.status == "need_variant":
+            state = _remember_pending(db, session, state, action, resolved)
+        return _turn(_resolve_message(resolved), state), [], state
+    _write_cart_snap(db, user_id, action, resolved.product)
     db.refresh(session)
-    state = load_checkout_state(session.checkout_state)
-    return None, snap, state
+    state = _clear_pending(db, session, load_checkout_state(session.checkout_state))
+    return None, [resolved.product], state
 
 
 def execute_commerce_action(
@@ -621,6 +803,14 @@ def execute_commerce_action(
 ) -> CommerceTurn:
     action = normalize_commerce_action(action)
     state = load_checkout_state(session.checkout_state)
+    pending = clean_pending_add(state.get("pending_add"))
+    if pending and action["action"] in ("cart_add", "checkout_start") and not _specific_product_ref(action["product_ref"]):
+        ref = dict(action["product_ref"])
+        ref["product_id"] = pending["product_id"]
+        resumed = action["action"]
+        if resumed == "cart_add" and pending["action"] == "checkout_start":
+            resumed = "checkout_start"
+        action = {**action, "action": resumed, "product_ref": ref}
     if recent_products is None:
         recent_products = load_recent_product_cards(db, session.id)
     name = action["action"]
@@ -640,7 +830,7 @@ def execute_commerce_action(
         return _turn(_resolve_message(resolved), state)
 
     if name == "cart_add":
-        early, snap, state = _add_selected_product(
+        early, snaps, state = _add_selected_product(
             db,
             user_id,
             session,
@@ -652,7 +842,9 @@ def execute_commerce_action(
         )
         if early:
             return early
-        message = _added_line(action["quantity"], snap)
+        if not snaps:
+            return _turn(NO_PRODUCT, state)
+        message = "\n".join(_added_line(action["quantity"], snap) for snap in snaps)
         if state["phase"] == "awaiting_confirm":
             message += "\n\n" + format_order_summary(get_cart_for_user(db, user_id), state)
         return _turn(message, state, cart_updated=True)
@@ -691,20 +883,30 @@ def execute_commerce_action(
 
     if name in ("checkout_start", "checkout_fill"):
         added = None
-        if name == "checkout_start" and _targets_product(action["product_ref"]):
-            early, snap, state = _add_selected_product(
-                db,
-                user_id,
-                session,
-                action,
-                attached_products,
-                sidebar_product,
-                recent_products,
-                state,
+        if name == "checkout_start":
+            attached_cards = [card for card in (_as_candidate(item) for item in attached_products) if card]
+            pool = _pool(attached_products, sidebar_product, recent_products)
+            should_add = bool(
+                _targets_product(action["product_ref"])
+                or action.get("add_all")
+                or attached_cards
+                or len(pool) == 1
             )
-            if early:
-                return early
-            added = _added_line(action["quantity"], snap)
+            if should_add:
+                early, snaps, state = _add_selected_product(
+                    db,
+                    user_id,
+                    session,
+                    action,
+                    attached_products,
+                    sidebar_product,
+                    recent_products,
+                    state,
+                )
+                if early:
+                    return early
+                if snaps:
+                    added = "\n".join(_added_line(action["quantity"], snap) for snap in snaps)
         if state["phase"] == "idle" and not get_cart_for_user(db, user_id).items:
             return _turn(EMPTY_CART, state)
         state = begin_collecting(state) if name == "checkout_start" else fill_slots(state, action["slots"])
@@ -789,7 +991,8 @@ Rules:
 - Ordinals pick one shown card: اولی/first → "first", دومی/second → "second", سومی/third → "third", four and five the same way. «این دومی رو سفارش بده» is checkout_start with hint "second", not a product search.
 - cart_view: user asks what is in the cart.
 - cart_update: user changes a quantity. remove true when they want the line deleted. product_ref.product_id stays null unless the message contains an id.
-- checkout_start: user wants to order, check out, or place the order (سفارش بده / سفارش کن) and checkout has not started. Keep the ordinal hint when they name a shown card.
+- checkout_start: user wants to order, check out, or place the order (سفارش بده / سفارش بدهید / میخوام سفارش بدم / سفارش کن) and checkout has not started. Keep the ordinal hint when they name a shown card.
+- cart_add also covers choosing a shown card: «همین اولی باشه», «همون», «اینو میخوام», with an optional color and size (رنگ بنفش سایز ۴۰). That is not a new product search.
 - checkout_fill: user is giving recipient_name, phone, address, or note. Copy only the values they actually gave.
 - order_confirm: user explicitly agrees to place the order (yes, confirm, place it, بله, تایید). Set confirm true. Do not confirm just because they asked to start an order.
 - order_cancel: user aborts checkout. Set cancel true.
@@ -828,14 +1031,46 @@ def _extract_first_json_object(text: str) -> str | None:
     return None
 
 
+def _pending_variant_action(text: str) -> dict | None:
+    if not _variant_reply(text):
+        return None
+    label = _extract_variant_label(text)
+    if label is None:
+        folded = _fold_text(text).strip()
+        if re.fullmatch(r"\d{1,3}", folded):
+            label = f"Size: {folded}"
+        else:
+            color = _explicit_color(folded)
+            numbers = re.findall(r"(?<!\d)(\d{1,3})(?!\d)", folded)
+            parts = []
+            if color:
+                parts.append(f"Color: {color}")
+            if numbers:
+                parts.append(f"Size: {numbers[-1]}")
+            label = " · ".join(parts) or None
+    return {
+        "action": "cart_add",
+        "quantity": 1,
+        "product_ref": {"hint": None, "product_id": None, "variant_label": label},
+        "confirm": False,
+        "cancel": False,
+    }
+
+
 def detect_commerce_action(message: str | None, checkout_phase: str, *, complete=None) -> dict:
     if not message or not str(message).strip():
         return normalize_commerce_action(None)
     text = str(message).strip()
-    phase = checkout_phase if checkout_phase in ("idle", "collecting", "awaiting_confirm") else "idle"
-    ruled = _rule_commerce_action(text)
+    known_phases = ("idle", "collecting", "awaiting_confirm", "awaiting_variant")
+    raw_phase = checkout_phase if checkout_phase in known_phases else "idle"
+    ruled = _rule_commerce_action(text, raw_phase)
     if ruled is not None:
         return normalize_commerce_action(ruled)
+    if raw_phase == "awaiting_variant":
+        pending_action = _pending_variant_action(text)
+        if pending_action is not None:
+            return normalize_commerce_action(pending_action)
+    phase = raw_phase if raw_phase in ("idle", "collecting", "awaiting_confirm") else "idle"
     prompt = _detector_prompt(text, phase)
     raw_text = _llm_complete(prompt) if complete is None else complete(prompt)
     json_str = _extract_first_json_object(raw_text or "")

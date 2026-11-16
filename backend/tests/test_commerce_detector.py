@@ -61,6 +61,72 @@ def test_add_the_blue_one_still_uses_llm():
     assert action["product_ref"]["hint"] == "blue"
 
 
+def test_screenshot_selection_is_cart_add_without_llm():
+    def complete(prompt: str) -> str:
+        raise AssertionError(prompt)
+
+    action = detect_commerce_action("همین اولی باشه رنگ بنفش سایز ۴۰", "idle", complete=complete)
+    assert action["action"] == "cart_add"
+    assert action["product_ref"]["hint"] == "first"
+    assert action["product_ref"]["variant_label"] == "Color: بنفش · Size: 40"
+    assert action["confirm"] is False
+    assert action["add_all"] is False
+
+
+def test_selected_products_phrase_is_checkout_for_all():
+    action = detect_commerce_action(
+        "با محصولات انتخاب‌شده سفارش بده",
+        "idle",
+        complete=lambda prompt: (_ for _ in ()).throw(AssertionError("llm")),
+    )
+    assert action["action"] == "checkout_start"
+    assert action["add_all"] is True
+    assert action["confirm"] is False
+
+
+def test_common_persian_order_and_cart_phrases():
+    expected = {
+        "سفارش بدهید": "checkout_start",
+        "میخوام سفارش بدم": "checkout_start",
+        "به سبدم اضافه کن": "cart_add",
+        "بذار تو سبد": "cart_add",
+        "اضافه کن به سبدم": "cart_add",
+        "اینو میخوام": "cart_add",
+        "دومی باشه": "cart_add",
+    }
+    for phrase, name in expected.items():
+        action = detect_commerce_action(
+            phrase,
+            "idle",
+            complete=lambda prompt, phrase=phrase: (_ for _ in ()).throw(AssertionError(phrase)),
+        )
+        assert action["action"] == name, phrase
+    second = detect_commerce_action("دومی باشه", "idle", complete=lambda prompt: "nope")
+    assert second["product_ref"]["hint"] == "second"
+
+
+def test_variant_clarify_color_and_size_completes_without_llm():
+    action = detect_commerce_action(
+        "رنگ بنفش سایز ۴۰",
+        "awaiting_variant",
+        complete=lambda prompt: (_ for _ in ()).throw(AssertionError("llm")),
+    )
+    assert action["action"] == "cart_add"
+    assert action["product_ref"]["variant_label"] == "Color: بنفش · Size: 40"
+
+
+def test_bare_ok_during_confirm_still_uses_llm():
+    seen = {}
+
+    def complete(prompt: str) -> str:
+        seen["prompt"] = prompt
+        return '{"action":"order_confirm","confirm":true}'
+
+    action = detect_commerce_action("باشه", "awaiting_confirm", complete=complete)
+    assert "باشه" in seen["prompt"]
+    assert action["action"] == "order_confirm"
+
+
 def test_collecting_prompt_prefers_checkout_over_search():
     seen = {}
 

@@ -320,3 +320,133 @@ def test_chat_add_first_size_filters_variants(chat_client, db_session, user_a, a
     assert body["message"].count("Size: 40") == 2
     assert "PURPLE" in body["message"] and "BLACK" in body["message"]
     assert db_session.query(CartItem).count() == 0
+
+
+def _shoe_cards():
+    variants = []
+    for color in ("PURPLE", "BLACK", "WHITE"):
+        for size in ("39", "40", "41"):
+            variants.append(
+                {
+                    "price": 36.17,
+                    "attributes": [
+                        {"name": "Color", "value": color},
+                        {"name": "Size", "value": size},
+                    ],
+                }
+            )
+    return [
+        {
+            "product_id": 501,
+            "subject": "Mens Supportive Running Shoes",
+            "price": 36.17,
+            "image_url": None,
+            "category_name": "Shoes",
+            "variants": variants,
+        },
+        {
+            "product_id": 502,
+            "subject": "Other Sneaker",
+            "price": 20,
+            "image_url": None,
+            "category_name": "Shoes",
+            "variants": [],
+        },
+    ]
+
+
+def test_chat_screenshot_phrase_adds_first_purple_size(chat_client, db_session, user_a, auth_header_a, monkeypatch):
+    session = _session(db_session, user_a)
+    db_session.add(
+        Message(session_id=session.id, role="assistant", content="shoes", products=json.dumps(_shoe_cards()))
+    )
+    db_session.commit()
+    _patch_quiet(monkeypatch)
+    _block_rag(monkeypatch)
+    response = chat_client.post(
+        "/api/chat",
+        data={"session_id": str(session.id), "message": "همین اولی باشه رنگ بنفش سایز ۴۰"},
+        headers=auth_header_a,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["cart_updated"] is True
+    assert body["products"] == []
+    assert body["order"] is None
+    assert body["checkout_phase"] == "idle"
+    assert "ثبت شد" not in body["message"]
+    assert "Added 1 × Mens Supportive Running Shoes (Color: PURPLE · Size: 40)" in body["message"]
+    item = db_session.query(CartItem).filter(CartItem.user_id == user_a.id).one()
+    assert item.product_id == 501
+    assert item.variant_label == "Color: PURPLE · Size: 40"
+    assert item.quantity == 1
+    assert db_session.query(Order).count() == 0
+
+
+def test_chat_selected_products_order_checks_out_without_placing(chat_client, db_session, user_a, auth_header_a, monkeypatch):
+    session = _session(db_session, user_a)
+    cap = {**MUG, "product_id": 202, "subject": "Red Cap", "price": 9}
+    _patch_quiet(monkeypatch)
+    _block_rag(monkeypatch)
+    response = chat_client.post(
+        "/api/chat",
+        data={
+            "session_id": str(session.id),
+            "message": "با محصولات انتخاب‌شده سفارش بده",
+            "selected_products": json.dumps([MUG, cap]),
+        },
+        headers=auth_header_a,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["cart_updated"] is True
+    assert body["products"] == []
+    assert body["order"] is None
+    assert body["checkout_phase"] == "collecting"
+    assert "ثبت شد" not in body["message"]
+    assert "Blue Mug" in body["message"] and "Red Cap" in body["message"]
+    assert "Who should receive this order?" in body["message"]
+    items = db_session.query(CartItem).filter(CartItem.user_id == user_a.id).all()
+    assert {item.product_id for item in items} == {101, 202}
+    assert db_session.query(Order).count() == 0
+
+
+def test_chat_variant_clarify_followup_adds_named_color(chat_client, db_session, user_a, auth_header_a, monkeypatch):
+    session = _session(db_session, user_a)
+    db_session.add(
+        Message(session_id=session.id, role="assistant", content="shoes", products=json.dumps(_shoe_cards()))
+    )
+    db_session.commit()
+    _patch_quiet(monkeypatch)
+    _block_rag(monkeypatch)
+
+    def post(text):
+        return chat_client.post(
+            "/api/chat",
+            data={"session_id": str(session.id), "message": text},
+            headers=auth_header_a,
+        )
+
+    asked = post("همین اولی باشه")
+    assert asked.status_code == 200
+    assert asked.json()["cart_updated"] is False
+    assert asked.json()["products"] == []
+    assert "Which variant" in asked.json()["message"]
+    assert db_session.query(CartItem).count() == 0
+    db_session.refresh(session)
+    pending = load_checkout_state(session.checkout_state)["pending_add"]
+    assert pending["product_id"] == 501
+    assert pending["action"] == "cart_add"
+
+    added = post("رنگ بنفش سایز ۴۰")
+    assert added.status_code == 200
+    body = added.json()
+    assert body["cart_updated"] is True
+    assert body["products"] == []
+    assert body["order"] is None
+    assert "Color: PURPLE · Size: 40" in body["message"]
+    assert "ثبت شد" not in body["message"]
+    item = db_session.query(CartItem).filter(CartItem.user_id == user_a.id).one()
+    assert item.product_id == 501
+    assert item.variant_label == "Color: PURPLE · Size: 40"
+    assert db_session.query(Order).count() == 0

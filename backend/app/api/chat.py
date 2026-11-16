@@ -40,7 +40,7 @@ from app.services.rag import (
     detect_emotion_with_llm,
 )
 from app.services.checkout_state import load_checkout_state
-from app.services.commerce_actions import detect_commerce_action, execute_commerce_action
+from app.services.commerce_actions import clear_pending_add, detect_commerce_action, execute_commerce_action
 from app.services.stt import transcribe_audio
 from app.services.tts import text_to_speech_to_bytes
 
@@ -252,14 +252,18 @@ async def _run_chat_response(
 ) -> ChatTurnResult:
     loop = asyncio.get_event_loop()
     attached_products = attached_products or []
-    phase = load_checkout_state(session.checkout_state)["phase"]
+    checkout = load_checkout_state(session.checkout_state)
+    phase = checkout["phase"]
+    detect_phase = "awaiting_variant" if phase == "idle" and checkout.get("pending_add") else phase
     search_text = None if user_text == "(user sent an image)" else (user_text or None)
 
     if not image_bytes:
         action = await loop.run_in_executor(
             _executor,
-            lambda text=user_text, current=phase: detect_commerce_action(text, current),
+            lambda text=user_text, current=detect_phase: detect_commerce_action(text, current),
         )
+        if action.get("action") == "none" and checkout.get("pending_add"):
+            clear_pending_add(db, session)
         if action.get("action") != "none":
             turn = execute_commerce_action(
                 db,
