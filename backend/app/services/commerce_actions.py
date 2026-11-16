@@ -493,3 +493,86 @@ def execute_commerce_action(
         return _turn(CANCELLED, state)
 
     return _turn("I couldn't do that.", state)
+
+
+def _detector_prompt(message: str, phase: str) -> str:
+    return f"""You classify a shopping-assistant utterance into one commerce action. Respond with ONLY a JSON object.
+
+Current checkout phase: "{phase}"
+User message: {json.dumps(message)}
+
+The user may write in any language.
+If phase is collecting or awaiting_confirm, treat the message as checkout (checkout_fill, order_confirm, or order_cancel) unless the user is clearly starting a new product search.
+If they are clearly starting a new product search, return action "none".
+Do not search the catalog yourself. Do not invent product ids.
+
+JSON schema:
+{{
+  "action": "cart_add" | "cart_view" | "cart_update" | "checkout_start" | "checkout_fill" | "order_confirm" | "order_cancel" | "clarify_product" | "none",
+  "quantity": 1,
+  "remove": false,
+  "product_ref": {{"hint": "first" | "this" | null, "product_id": null, "variant_label": null}},
+  "slots": {{"recipient_name": null, "phone": null, "address": null, "note": null}},
+  "confirm": false,
+  "cancel": false
+}}
+
+Rules:
+- cart_add: user wants the current product or shown cards added. Put a color or size in product_ref.variant_label when they name one. quantity defaults to 1.
+- cart_view: user asks what is in the cart.
+- cart_update: user changes a quantity. remove true when they want the line deleted. product_ref.product_id stays null unless the message contains an id.
+- checkout_start: user wants to order, check out, or place the order and checkout has not started.
+- checkout_fill: user is giving recipient_name, phone, address, or note. Copy only the values they actually gave.
+- order_confirm: user explicitly agrees to place the order (yes, confirm, place it, بله, تایید). Set confirm true.
+- order_cancel: user aborts checkout. Set cancel true.
+- clarify_product: user refers to a product but not one specific card.
+- none: greeting, product search, store question, FAQ, or anything that is not a cart or checkout action.
+"""
+
+
+def _llm_complete(prompt: str) -> str:
+    from langchain_core.messages import HumanMessage
+    from langchain_openai import ChatOpenAI
+
+    from app.config import AVALAI_API_KEY
+    from app.services.rag import _avalai_chat_kwargs
+
+    if not AVALAI_API_KEY:
+        return ""
+    llm = ChatOpenAI(**_avalai_chat_kwargs(temperature=0, max_tokens=300))
+    response = llm.invoke([HumanMessage(content=prompt)])
+    content = response.content if hasattr(response, "content") else str(response)
+    return content or ""
+
+
+def _extract_first_json_object(text: str) -> str | None:
+    start = text.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    for index, char in enumerate(text[start:], start=start):
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : index + 1]
+    return None
+
+
+def detect_commerce_action(message: str | None, checkout_phase: str, *, complete=None) -> dict:
+    if not message or not str(message).strip():
+        return normalize_commerce_action(None)
+    phase = checkout_phase if checkout_phase in ("idle", "collecting", "awaiting_confirm") else "idle"
+    prompt = _detector_prompt(str(message).strip(), phase)
+    raw_text = _llm_complete(prompt) if complete is None else complete(prompt)
+    json_str = _extract_first_json_object(raw_text or "")
+    data = None
+    if json_str:
+        try:
+            parsed = json.loads(json_str)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict):
+            data = parsed
+    return normalize_commerce_action(data)
