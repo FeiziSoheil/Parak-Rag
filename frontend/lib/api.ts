@@ -412,17 +412,40 @@ export async function voiceDetectIntent(voiceFile: File): Promise<VoiceDetectInt
   return res.json();
 }
 
+export type SidebarProductSnapshot = {
+  product_id: number;
+  subject: string;
+  price: number | null;
+  image_url: string | null;
+  category_name: string;
+  variants?: ProductVariant[];
+  selected_variant_label?: string | null;
+};
+
+export type ChatCommerceOrder = {
+  id: number;
+  total_amount: number;
+  status: string;
+};
+
 export type SendChatResult = {
   message: string;
   products: ProductSummary[];
   suggested_emotion?: string;
+  cart_updated?: boolean;
+  order?: ChatCommerceOrder | null;
+  checkout_phase?: string | null;
 };
 
 export async function sendChat(
   sessionId: number,
   message: string,
   imageFile: File | null,
-  options?: { topK?: number }
+  options?: {
+    topK?: number;
+    selectedProducts?: ProductSummary[];
+    sidebarProduct?: SidebarProductSnapshot | null;
+  }
 ): Promise<SendChatResult> {
   const token = getToken();
   if (!token) throw new Error("Not authenticated");
@@ -431,6 +454,12 @@ export async function sendChat(
   formData.append("message", message);
   if (imageFile) formData.append("image", imageFile);
   if (options?.topK != null && options.topK > 0) formData.append("top_k", String(options.topK));
+  if (options?.selectedProducts && options.selectedProducts.length > 0) {
+    formData.append("selected_products", JSON.stringify(options.selectedProducts));
+  }
+  if (options?.sidebarProduct) {
+    formData.append("sidebar_product", JSON.stringify(options.sidebarProduct));
+  }
   const res = await fetch(`${API_BASE}/api/chat`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
@@ -450,12 +479,16 @@ export type SendVoiceChatResult = {
   /** متن ترنسکریب‌شده از صدای کاربر (STT) */
   transcribed_text: string;
   audio_base64?: string;
+  cart_updated?: boolean;
+  order?: ChatCommerceOrder | null;
+  checkout_phase?: string | null;
 };
 
 export async function sendVoiceChat(
   sessionId: number,
   voiceFile: File,
-  selectedProducts?: ProductSummary[]
+  selectedProducts?: ProductSummary[],
+  sidebarProduct?: SidebarProductSnapshot | null
 ): Promise<SendVoiceChatResult> {
   const token = getToken();
   if (!token) throw new Error("Not authenticated");
@@ -465,6 +498,9 @@ export async function sendVoiceChat(
   // Send selected products as JSON so backend knows which product(s) user is asking about
   if (selectedProducts && selectedProducts.length > 0) {
     formData.append("selected_products", JSON.stringify(selectedProducts));
+  }
+  if (sidebarProduct) {
+    formData.append("sidebar_product", JSON.stringify(sidebarProduct));
   }
   const res = await fetch(`${API_BASE}/api/voice-chat`, {
     method: "POST",

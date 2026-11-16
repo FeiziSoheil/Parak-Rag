@@ -24,6 +24,7 @@ function variantLabel(v: ProductVariant): string {
 type Props = {
   product: ProductSummary;
   onClose: () => void;
+  onVariantChange?: (variant: ProductVariant | null) => void;
 };
 
 function SidebarProductImage({ url, alt }: { url: string; alt: string }) {
@@ -93,7 +94,7 @@ function VariantThumbnail({ url, alt }: { url: string; alt: string }) {
   );
 }
 
-export function ProductSidebar({ product, onClose }: Props) {
+export function ProductSidebar({ product, onClose, onVariantChange }: Props) {
   const { addItem } = useCart();
   const hasVariants = !!(product.variants && product.variants.length > 0);
   const [selectedVariantIndex, setSelectedVariantIndex] = useState<number | null>(null);
@@ -102,7 +103,8 @@ export function ProductSidebar({ product, onClose }: Props) {
   useEffect(() => setMounted(true), []);
   useEffect(() => {
     setSelectedVariantIndex(null);
-  }, [product.product_id]);
+    onVariantChange?.(null);
+  }, [product.product_id, onVariantChange]);
 
   const selectedVariant =
     hasVariants && selectedVariantIndex != null ? product.variants![selectedVariantIndex] : null;
@@ -197,7 +199,10 @@ export function ProductSidebar({ product, onClose }: Props) {
                   <li key={i}>
                     <button
                       type="button"
-                      onClick={() => setSelectedVariantIndex(i)}
+                      onClick={() => {
+                        setSelectedVariantIndex(i);
+                        onVariantChange?.(v);
+                      }}
                       className={`w-full flex items-center gap-3 py-2 border-b border-border last:border-b-0 text-left rounded-md px-1 -mx-1 transition-colors ${
                         selected ? "bg-primary/10 ring-1 ring-primary/40" : "hover:bg-muted/50"
                       }`}

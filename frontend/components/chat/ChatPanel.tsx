@@ -8,7 +8,8 @@ import { MessageInput, type MessageInputHandle } from "./MessageInput";
 import { ProductSidebar } from "./ProductSidebar";
 import type { AIAvatarState, AIAvatarEmotion } from "./AIAvatar";
 import { Skeleton } from "@/components/ui/skeleton";
-import { getCurrentUser, getSessionMessages, sendChat, sendVoiceChat, readAloud, detectIntent, voiceDetectIntent, getAvatarUrl, type ProductSummary, type UserProfile } from "@/lib/api";
+import { getCurrentUser, getSessionMessages, sendChat, sendVoiceChat, readAloud, detectIntent, voiceDetectIntent, getAvatarUrl, type ProductSummary, type ProductVariant, type UserProfile } from "@/lib/api";
+import { buildSidebarProduct, commerceFollowUp } from "@/lib/commerceChat.mjs";
 import { useCart } from "@/contexts/CartContext";
 
 function getDisplayName(user: UserProfile | null): string {
@@ -35,23 +36,16 @@ type Props = {
   sessionId: number | null;
 };
 
-function formatProductContext(products: ProductSummary[]): string {
-  if (products.length === 0) return "";
-  const lines = products.map((p) => {
-    const parts = [`Name: ${p.subject}`];
-    if (p.price != null) parts.push(`Price: ${typeof p.price === "number" ? p.price.toFixed(2) : p.price}`);
-    if (p.category_name) parts.push(`Category: ${p.category_name}`);
-    return `- ${parts.join(" | ")}`;
-  });
-  return `[Selected product(s) context:\n${lines.join("\n")}\n]\n\n`;
-}
-
 export function ChatPanel({ sessionId }: Props) {
-  const { addItem } = useCart();
+  const { addItem, refresh } = useCart();
   const [messages, setMessages] = useState<MessageEntry[]>([]);
   const [selectedProducts, setSelectedProducts] = useState<ProductSummary[]>([]);
   /** Product currently shown in the right sidebar (last selected for view). */
   const [sidebarProduct, setSidebarProduct] = useState<ProductSummary | null>(null);
+  const [sidebarVariant, setSidebarVariant] = useState<ProductVariant | null>(null);
+  const handleSidebarVariant = useCallback((variant: ProductVariant | null) => {
+    setSidebarVariant(variant);
+  }, []);
   /** During close we keep rendering the sidebar until width transition finishes. */
   const [closingProduct, setClosingProduct] = useState<ProductSummary | null>(null);
   /** Drives width transition; stays true while closing so width animates to 0 before unmount. */
@@ -344,8 +338,8 @@ export function ChatPanel({ sessionId }: Props) {
     lastMessageSentAtRef.current = Date.now();
     setIdleLong(false);
     const productsToAttach = attachedProducts ?? selectedProducts;
-    const effectiveMessage = productsToAttach.length > 0 ? formatProductContext(productsToAttach) + message.trim() : message;
     const trimmedMessage = message.trim();
+    const sidebarPayload = sidebarProduct ? buildSidebarProduct(sidebarProduct, sidebarVariant) : null;
     const userMessage: MessageEntry = {
       id: nextTempIdRef.current--,
       role: "user",
@@ -367,12 +361,12 @@ export function ChatPanel({ sessionId }: Props) {
     }
     
     try {
-      const { message: responseText, products, suggested_emotion } = await sendChat(
-        sessionId,
-        effectiveMessage,
-        imageFile,
-        { topK: getTopK() }
-      );
+      const result = await sendChat(sessionId, trimmedMessage, imageFile, {
+        topK: getTopK(),
+        selectedProducts: productsToAttach,
+        sidebarProduct: sidebarPayload,
+      });
+      const { message: responseText, products, suggested_emotion } = result;
       setMessages((prev) => [
         ...prev,
         {
@@ -384,6 +378,9 @@ export function ChatPanel({ sessionId }: Props) {
         },
       ]);
       applySuggestedEmotion(suggested_emotion);
+      const follow = commerceFollowUp(result);
+      if (follow.refreshCart) await refresh();
+      if (follow.orderToast) toast.success(follow.orderToast);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Message could not be sent.";
       toast.error(msg);
@@ -398,6 +395,7 @@ export function ChatPanel({ sessionId }: Props) {
     setIdleLong(false);
     // Use attached products from parameter or current selection
     const productsToAttach = attachedProducts ?? selectedProducts;
+    const sidebarPayload = sidebarProduct ? buildSidebarProduct(sidebarProduct, sidebarVariant) : null;
     
     // Show user message with STT loader immediately
     const pendingUserMsgId = nextTempIdRef.current--;
@@ -439,11 +437,13 @@ export function ChatPanel({ sessionId }: Props) {
     
     // Then: send voice chat for full response (with selected products)
     try {
-      const { message: responseText, products, audio_base64, suggested_emotion } = await sendVoiceChat(
+      const result = await sendVoiceChat(
         sessionId,
         voiceFile,
-        productsToAttach.length > 0 ? productsToAttach : undefined
+        productsToAttach.length > 0 ? productsToAttach : undefined,
+        sidebarPayload
       );
+      const { message: responseText, products, audio_base64, suggested_emotion } = result;
       setMessages((prev) => [
         ...prev,
         {
@@ -456,6 +456,9 @@ export function ChatPanel({ sessionId }: Props) {
         },
       ]);
       applySuggestedEmotion(suggested_emotion);
+      const follow = commerceFollowUp(result);
+      if (follow.refreshCart) await refresh();
+      if (follow.orderToast) toast.success(follow.orderToast);
     } catch (err) {
       console.error("Voice message failed:", err);
       const errMsg = err instanceof Error ? err.message : "Voice message failed.";
@@ -630,6 +633,7 @@ export function ChatPanel({ sessionId }: Props) {
               <ProductSidebar
                 product={sidebarProduct ?? closingProduct!}
                 onClose={startCloseSidebar}
+                onVariantChange={handleSidebarVariant}
               />
             </div>
           </>
