@@ -500,3 +500,142 @@ export async function readAloud(text: string): Promise<ReadAloudResult> {
   }
   return res.json();
 }
+
+export type CartItem = {
+  id: number;
+  product_id: number;
+  subject: string;
+  unit_price: number | null;
+  image_url: string | null;
+  category_name: string;
+  variant_label: string;
+  quantity: number;
+};
+
+export type Cart = {
+  items: CartItem[];
+  item_count: number;
+  subtotal: number | null;
+  checkout_ready: boolean;
+};
+
+export type CartItemCreateInput = {
+  product_id: number;
+  subject: string;
+  unit_price: number | null;
+  image_url: string | null;
+  category_name: string;
+  variant_label?: string;
+  quantity?: number;
+};
+
+export type OrderCreateInput = {
+  recipient_name: string;
+  phone: string;
+  address: string;
+  note?: string | null;
+};
+
+export type OrderItem = {
+  id: number;
+  product_id: number;
+  subject: string;
+  unit_price: number;
+  image_url: string | null;
+  category_name: string;
+  variant_label: string;
+  quantity: number;
+};
+
+export type Order = {
+  id: number;
+  status: string;
+  recipient_name: string;
+  phone: string;
+  address: string;
+  note: string | null;
+  total_amount: number;
+  created_at: string;
+  items: OrderItem[];
+};
+
+export async function getCart(): Promise<Cart> {
+  const token = getToken();
+  if (!token) throw new Error("Not authenticated");
+  const res = await fetch(`${API_BASE}/api/cart`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error("Failed to load cart");
+  return res.json();
+}
+
+export async function addCartItem(input: CartItemCreateInput): Promise<CartItem> {
+  const token = getToken();
+  if (!token) throw new Error("Not authenticated");
+  const res = await fetch(`${API_BASE}/api/cart/items`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      variant_label: "",
+      quantity: 1,
+      ...input,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail || "Failed to add to cart");
+  }
+  return res.json();
+}
+
+export async function updateCartItem(itemId: number, quantity: number): Promise<CartItem> {
+  const token = getToken();
+  if (!token) throw new Error("Not authenticated");
+  const res = await fetch(`${API_BASE}/api/cart/items/${itemId}`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ quantity }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail || "Failed to update cart");
+  }
+  return res.json();
+}
+
+export async function deleteCartItem(itemId: number): Promise<void> {
+  const token = getToken();
+  if (!token) throw new Error("Not authenticated");
+  const res = await fetch(`${API_BASE}/api/cart/items/${itemId}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail || "Failed to remove item");
+  }
+}
+
+export async function createOrder(body: OrderCreateInput): Promise<Order> {
+  const token = getToken();
+  if (!token) throw new Error("Not authenticated");
+  const res = await fetch(`${API_BASE}/api/orders`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail || "Checkout failed");
+  }
+  return res.json();
+}

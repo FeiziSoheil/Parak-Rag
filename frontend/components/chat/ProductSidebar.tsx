@@ -1,11 +1,13 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { toast } from "sonner";
 import type { ProductSummary, ProductVariant } from "@/lib/api";
 import { getProductImageUrl } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { useCart } from "@/contexts/CartContext";
 
-function formatVariantLabel(v: ProductVariant): string {
+function variantLabel(v: ProductVariant): string {
   if (v.attributes && v.attributes.length > 0) {
     return v.attributes
       .map((a) => {
@@ -14,9 +16,9 @@ function formatVariantLabel(v: ProductVariant): string {
         return n && val ? `${n}: ${val}` : val || n || "";
       })
       .filter(Boolean)
-      .join(", ") || "—";
+      .join(" · ");
   }
-  return v.name || v.color || "—";
+  return (v.name || v.color || "").trim();
 }
 
 type Props = {
@@ -92,9 +94,48 @@ function VariantThumbnail({ url, alt }: { url: string; alt: string }) {
 }
 
 export function ProductSidebar({ product, onClose }: Props) {
-  const imgSrc = product.image_url?.trim() || null;
+  const { addItem } = useCart();
+  const hasVariants = !!(product.variants && product.variants.length > 0);
+  const [selectedVariantIndex, setSelectedVariantIndex] = useState<number | null>(null);
+  const [adding, setAdding] = useState(false);
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+  useEffect(() => {
+    setSelectedVariantIndex(null);
+  }, [product.product_id]);
+
+  const selectedVariant =
+    hasVariants && selectedVariantIndex != null ? product.variants![selectedVariantIndex] : null;
+  const displayImage =
+    selectedVariant?.image?.trim() || product.image_url?.trim() || null;
+  const displayPrice =
+    selectedVariant != null
+      ? selectedVariant.price ?? product.price
+      : product.price;
+
+  async function handleAddToCart() {
+    if (hasVariants && selectedVariantIndex == null) {
+      toast.error("Select a variant");
+      return;
+    }
+    const v = selectedVariant;
+    setAdding(true);
+    try {
+      await addItem({
+        product_id: product.product_id,
+        subject: product.subject,
+        unit_price: v != null ? (v.price ?? product.price) : product.price,
+        image_url: v?.image?.trim() || product.image_url,
+        category_name: product.category_name || "",
+        variant_label: v ? variantLabel(v) : "",
+        quantity: 1,
+      });
+    } catch {
+      // toast in context
+    } finally {
+      setAdding(false);
+    }
+  }
 
   return (
     <aside
@@ -118,8 +159,8 @@ export function ProductSidebar({ product, onClose }: Props) {
         </Button>
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-4">
-        {imgSrc ? (
-          <SidebarProductImage url={imgSrc} alt={product.subject.slice(0, 80)} />
+        {displayImage ? (
+          <SidebarProductImage url={displayImage} alt={product.subject.slice(0, 80)} />
         ) : (
           <div className="w-full aspect-square max-h-64 bg-muted rounded-lg flex items-center justify-center text-muted-foreground">
             <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -133,9 +174,9 @@ export function ProductSidebar({ product, onClose }: Props) {
           <h3 className="text-sm font-semibold text-foreground leading-snug">
             {product.subject}
           </h3>
-          {product.price != null && (
+          {displayPrice != null && (
             <p className="mt-1 text-base font-medium text-foreground">
-              ${typeof product.price === "number" ? product.price.toFixed(2) : product.price}
+              ${typeof displayPrice === "number" ? displayPrice.toFixed(2) : displayPrice}
             </p>
           )}
           {product.category_name && (
@@ -144,67 +185,88 @@ export function ProductSidebar({ product, onClose }: Props) {
             </p>
           )}
         </div>
-        {product.variants && product.variants.length > 0 && (
+        {hasVariants && (
           <div>
             <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5">
               Variants
             </h4>
             <ul className="space-y-0 text-sm">
-              {product.variants.map((v, i) => (
-                <li key={i} className="flex items-center gap-3 py-2 border-b border-border last:border-b-0 last:pb-0">
-                  {v.image?.trim() ? (
-                    <VariantThumbnail
-                      url={v.image.trim()}
-                      alt={v.attributes?.map((a) => a.value).filter(Boolean).join(" ") || product.subject.slice(0, 40)}
-                    />
-                  ) : (
-                    <div className="w-12 h-12 shrink-0 rounded-md bg-muted flex items-center justify-center text-muted-foreground">
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
-                        <circle cx="9" cy="9" r="2" />
-                        <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
-                      </svg>
-                    </div>
-                  )}
-                  <span className="min-w-0 flex-1">
-                    {v.attributes && v.attributes.length > 0 ? (
-                      v.attributes.map((a, j) => {
-                        const n = (a.name || "").trim();
-                        const val = (a.value || "").trim();
-                        if (!n && !val) return null;
-                        return (
-                          <span key={j}>
-                            {j > 0 && (
-                              <span className="text-muted-foreground/60 mx-1"> · </span>
-                            )}
-                            {n && (
-                              <span className="text-muted-foreground font-normal">
-                                {n}
-                                {val ? ": " : ""}
+              {product.variants!.map((v, i) => {
+                const selected = selectedVariantIndex === i;
+                return (
+                  <li key={i}>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedVariantIndex(i)}
+                      className={`w-full flex items-center gap-3 py-2 border-b border-border last:border-b-0 text-left rounded-md px-1 -mx-1 transition-colors ${
+                        selected ? "bg-primary/10 ring-1 ring-primary/40" : "hover:bg-muted/50"
+                      }`}
+                    >
+                      {v.image?.trim() ? (
+                        <VariantThumbnail
+                          url={v.image.trim()}
+                          alt={v.attributes?.map((a) => a.value).filter(Boolean).join(" ") || product.subject.slice(0, 40)}
+                        />
+                      ) : (
+                        <div className="w-12 h-12 shrink-0 rounded-md bg-muted flex items-center justify-center text-muted-foreground">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+                            <circle cx="9" cy="9" r="2" />
+                            <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+                          </svg>
+                        </div>
+                      )}
+                      <span className="min-w-0 flex-1">
+                        {v.attributes && v.attributes.length > 0 ? (
+                          v.attributes.map((a, j) => {
+                            const n = (a.name || "").trim();
+                            const val = (a.value || "").trim();
+                            if (!n && !val) return null;
+                            return (
+                              <span key={j}>
+                                {j > 0 && (
+                                  <span className="text-muted-foreground/60 mx-1"> · </span>
+                                )}
+                                {n && (
+                                  <span className="text-muted-foreground font-normal">
+                                    {n}
+                                    {val ? ": " : ""}
+                                  </span>
+                                )}
+                                {val && (
+                                  <span className="text-foreground font-medium">
+                                    {val}
+                                  </span>
+                                )}
                               </span>
-                            )}
-                            {val && (
-                              <span className="text-foreground font-medium">
-                                {val}
-                              </span>
-                            )}
-                          </span>
-                        );
-                      })
-                    ) : (
-                      <span className="text-foreground">{v.name || v.color || "—"}</span>
-                    )}
-                  </span>
-                  {v.price != null && (
-                    <span className="text-muted-foreground shrink-0 tabular-nums">
-                      ${typeof v.price === "number" ? v.price.toFixed(2) : v.price}
-                    </span>
-                  )}
-                </li>
-              ))}
+                            );
+                          })
+                        ) : (
+                          <span className="text-foreground">{v.name || v.color || "—"}</span>
+                        )}
+                      </span>
+                      {v.price != null && (
+                        <span className="text-muted-foreground shrink-0 tabular-nums">
+                          ${typeof v.price === "number" ? v.price.toFixed(2) : v.price}
+                        </span>
+                      )}
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           </div>
         )}
+      </div>
+      <div className="shrink-0 p-3 border-t border-border">
+        <Button
+          type="button"
+          className="w-full"
+          disabled={adding}
+          onClick={() => void handleAddToCart()}
+        >
+          {adding ? "Adding…" : "Add to cart"}
+        </Button>
       </div>
     </aside>
   );

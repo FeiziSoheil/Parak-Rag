@@ -9,6 +9,7 @@ import { ProductSidebar } from "./ProductSidebar";
 import type { AIAvatarState, AIAvatarEmotion } from "./AIAvatar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getCurrentUser, getSessionMessages, sendChat, sendVoiceChat, readAloud, detectIntent, voiceDetectIntent, getAvatarUrl, type ProductSummary, type UserProfile } from "@/lib/api";
+import { useCart } from "@/contexts/CartContext";
 
 function getDisplayName(user: UserProfile | null): string {
   if (!user) return "";
@@ -46,6 +47,7 @@ function formatProductContext(products: ProductSummary[]): string {
 }
 
 export function ChatPanel({ sessionId }: Props) {
+  const { addItem } = useCart();
   const [messages, setMessages] = useState<MessageEntry[]>([]);
   const [selectedProducts, setSelectedProducts] = useState<ProductSummary[]>([]);
   /** Product currently shown in the right sidebar (last selected for view). */
@@ -197,24 +199,7 @@ export function ChatPanel({ sessionId }: Props) {
     getCurrentUser().then(setUser);
   }, []);
 
-  // Focus input when entering chat (session ready, not loading)
-  useEffect(() => {
-    if (sessionId && !loading) {
-      const t = setTimeout(() => messageInputRef.current?.focus(), 100);
-      return () => clearTimeout(t);
-    }
-  }, [sessionId, loading]);
-
-  // Focus input when model finishes responding
-  const prevSending = useRef(sending);
-  useEffect(() => {
-    if (prevSending.current && !sending) {
-      messageInputRef.current?.focus();
-    }
-    prevSending.current = sending;
-  }, [sending]);
-
-  // Keyboard shortcuts: / → focus message input; Escape → stop AI voice
+  // Keyboard shortcuts: / → open compose dialog; Escape → stop AI voice
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const inInput =
@@ -223,7 +208,7 @@ export function ChatPanel({ sessionId }: Props) {
         (e.target as HTMLElement)?.getAttribute?.("contenteditable") === "true";
       if (e.key === "/" && !inInput) {
         e.preventDefault();
-        messageInputRef.current?.focus();
+        messageInputRef.current?.openCompose();
         return;
       }
       if (e.key === "Escape" && isAISpeaking) {
@@ -281,6 +266,22 @@ export function ChatPanel({ sessionId }: Props) {
     if (saved === null) return undefined;
     const n = parseInt(saved, 10);
     return Number.isNaN(n) || n < 1 || n > 100 ? undefined : n;
+  }
+
+  async function handleAddToCart(product: ProductSummary) {
+    try {
+      await addItem({
+        product_id: product.product_id,
+        subject: product.subject,
+        unit_price: product.price,
+        image_url: product.image_url,
+        category_name: product.category_name || "",
+        variant_label: "",
+        quantity: 1,
+      });
+    } catch {
+      // toast in CartContext
+    }
   }
 
   function toggleProductSelection(product: ProductSummary) {
@@ -582,6 +583,7 @@ export function ChatPanel({ sessionId }: Props) {
                 onRegenerate={handleRegenerate}
                 selectedProductIds={new Set(selectedProducts.map((p) => p.product_id))}
                 onProductSelect={toggleProductSelection}
+                onAddToCart={handleAddToCart}
                 voiceAudioRef={voiceAudioRef}
                 onAudioPlayStart={handleAudioPlayStart}
                 onAudioPlayEnd={handleAudioPlayEnd}

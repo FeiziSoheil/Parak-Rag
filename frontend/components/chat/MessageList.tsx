@@ -56,6 +56,7 @@ type Props = {
   onRegenerate?: () => void;
   selectedProductIds?: Set<number>;
   onProductSelect?: (product: ProductSummary) => void;
+  onAddToCart?: (product: ProductSummary) => void;
   /** Ref for the last assistant voice audio element (for playback control / interruption). */
   voiceAudioRef?: React.RefObject<HTMLAudioElement | null>;
   onAudioPlayStart?: () => void;
@@ -110,10 +111,12 @@ function ProductCards({
   products,
   selectedProductIds,
   onProductSelect,
+  onAddToCart,
 }: {
   products: ProductSummary[];
   selectedProductIds?: Set<number>;
   onProductSelect?: (product: ProductSummary) => void;
+  onAddToCart?: (product: ProductSummary) => void;
 }) {
   const isSelectable = typeof onProductSelect === "function";
   return (
@@ -122,15 +125,13 @@ function ProductCards({
       {products.map((p) => {
         const imgSrc = p.image_url?.trim() || null;
         const selected = selectedProductIds?.has(p.product_id) ?? false;
-        const Wrapper = isSelectable ? "button" : "div";
+        const hasVariants = !!(p.variants && p.variants.length > 0);
         return (
-          <Wrapper
+          <div
             key={p.product_id}
-            type={isSelectable ? "button" : undefined}
-            onClick={isSelectable ? () => onProductSelect?.(p) : undefined}
-            className={`w-full text-left rounded-xl border overflow-hidden transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 relative ${
+            className={`w-full text-left rounded-xl border overflow-hidden transition-colors relative ${
               isSelectable
-                ? "cursor-pointer hover:bg-muted/50 " + (selected ? "border-primary ring-2 ring-primary/30 bg-primary/5" : "border-border bg-card")
+                ? "hover:bg-muted/50 " + (selected ? "border-primary ring-2 ring-primary/30 bg-primary/5" : "border-border bg-card")
                 : "border-border bg-card hover:bg-muted/50"
             }`}
           >
@@ -141,35 +142,63 @@ function ProductCards({
                 </svg>
               </div>
             )}
-            <div className="relative">
-              {imgSrc ? (
-                <ProductCardImage url={imgSrc} alt={p.subject.slice(0, 60)} />
-              ) : (
-                <div className="w-full h-32 bg-muted flex items-center justify-center text-muted-foreground text-xs">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
-                    <circle cx="9" cy="9" r="2" />
-                    <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
-                  </svg>
-                </div>
-              )}
-            </div>
-            <div className="p-3">
-              <p className="text-sm font-medium text-foreground">
-                {p.subject}
-              </p>
-              <div className="flex items-center justify-between mt-1.5">
-                {p.price != null && (
-                  <p className="text-sm text-muted-foreground">
-                    ${typeof p.price === "number" ? p.price.toFixed(2) : p.price}
-                  </p>
-                )}
-                {p.category_name && (
-                  <span className="text-xs text-muted-foreground">{p.category_name}</span>
+            <button
+              type="button"
+              disabled={!isSelectable}
+              onClick={isSelectable ? () => onProductSelect?.(p) : undefined}
+              className={`w-full text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${
+                isSelectable ? "cursor-pointer" : "cursor-default"
+              }`}
+            >
+              <div className="relative">
+                {imgSrc ? (
+                  <ProductCardImage url={imgSrc} alt={p.subject.slice(0, 60)} />
+                ) : (
+                  <div className="w-full h-32 bg-muted flex items-center justify-center text-muted-foreground text-xs">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+                      <circle cx="9" cy="9" r="2" />
+                      <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+                    </svg>
+                  </div>
                 )}
               </div>
-            </div>
-          </Wrapper>
+              <div className="p-3 pb-0">
+                <p className="text-sm font-medium text-foreground">
+                  {p.subject}
+                </p>
+                <div className="flex items-center justify-between mt-1.5 gap-2 pb-3">
+                  {p.price != null && (
+                    <p className="text-sm text-muted-foreground">
+                      ${typeof p.price === "number" ? p.price.toFixed(2) : p.price}
+                    </p>
+                  )}
+                  {p.category_name && (
+                    <span className="text-xs text-muted-foreground truncate">{p.category_name}</span>
+                  )}
+                </div>
+              </div>
+            </button>
+            {onAddToCart && (
+              <div className="px-3 pb-3">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="w-full"
+                  onClick={() => {
+                    if (hasVariants) {
+                      onProductSelect?.(p);
+                    } else {
+                      onAddToCart(p);
+                    }
+                  }}
+                >
+                  {hasVariants ? "Select variant" : "Add to cart"}
+                </Button>
+              </div>
+            )}
+          </div>
         );
       })}
       </div>
@@ -276,7 +305,7 @@ function CheckIcon({ className }: { className?: string }) {
   );
 }
 
-export function MessageList({ messages, sending, expectsQdrantSearch = false, welcomeMessage, suggestedPrompts, onSuggestedPromptClick, onRegenerate, selectedProductIds, onProductSelect, voiceAudioRef, onAudioPlayStart, onAudioPlayEnd, onReadAloud, avatarState = "idle", avatarEmotion = "neutral", onAvatarClick, userAvatarUrl }: Props) {
+export function MessageList({ messages, sending, expectsQdrantSearch = false, welcomeMessage, suggestedPrompts, onSuggestedPromptClick, onRegenerate, selectedProductIds, onProductSelect, onAddToCart, voiceAudioRef, onAudioPlayStart, onAudioPlayEnd, onReadAloud, avatarState = "idle", avatarEmotion = "neutral", onAvatarClick, userAvatarUrl }: Props) {
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [readAloudLoadingId, setReadAloudLoadingId] = useState<number | null>(null);
   const [typewriterCompleteIds, setTypewriterCompleteIds] = useState<Set<number>>(() => new Set());
@@ -436,7 +465,7 @@ export function MessageList({ messages, sending, expectsQdrantSearch = false, we
             <div
               className={`max-w-[85%] w-fit rounded-xl px-4 py-[5px] ${
                 m.role === "user"
-                  ? "bg-primary text-primary-foreground"
+                  ? "bg-primary text-white"
                   : "bg-muted text-foreground border border-border/50"
               }`}
             >
@@ -521,7 +550,7 @@ export function MessageList({ messages, sending, expectsQdrantSearch = false, we
                         .join("\n")}
                     </p>
                   ) : m.attachedProducts?.length ? (
-                    <p className="text-sm text-primary-foreground/80 italic">Question about attached product(s)</p>
+                    <p className="text-sm text-white/80 italic">Question about attached product(s)</p>
                   ) : null}
                 </>
               )}
@@ -530,6 +559,7 @@ export function MessageList({ messages, sending, expectsQdrantSearch = false, we
                   products={m.products}
                   selectedProductIds={selectedProductIds}
                   onProductSelect={onProductSelect}
+                  onAddToCart={onAddToCart}
                 />
               )}
             </div>
