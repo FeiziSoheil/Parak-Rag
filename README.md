@@ -1,45 +1,45 @@
-# 🛍️ PARAK — Intelligent Multimodal RAG & Conversational E-Commerce Assistant
+# PARAK — Intelligent Multimodal RAG & Conversational E-Commerce Assistant
 
 **PARAK** (پَرَک) is a production-ready, full-stack **Conversational Commerce & Retrieval-Augmented Generation (RAG)** platform designed for modern e-commerce. It empowers users to explore products through text, images, or voice, receive personalized recommendations, manage their shopping cart, and complete full multi-turn checkouts directly within the conversation.
 
 ---
 
-## 📸 Screenshots
+## Screenshots
 
-### 👋 Welcome & Quick Actions
+### Welcome & Quick Actions
 ![Welcome screen with AI avatar and suggested prompts](./frontend/public/images/%5BRAG1%5D.png)
 
-### 🎁 Product Recommendations & Details
+### Product Recommendations & Details
 ![Chat with product cards and resizable product sidebar](./frontend/public/images/%5BRAG2%5D.png)
 
-### 📷 Visual / Image Search
+### Visual / Image Search
 ![Upload a photo to find similar products in the catalog](./frontend/public/images/%5BRAG3%5D.png)
 
-### 🏪 Store Info & FAQ (Multilingual)
+### Store Info & FAQ (Multilingual)
 ![Persian conversation about store hours and return policy](./frontend/public/images/%5BRAG4%5D.png)
 
 ---
 
-## ✨ Key Highlights
+## Key Highlights
 
 | Feature | Description |
 |---------|-------------|
-| 🛒 **Conversational Commerce** | Add, remove, view, and update cart items naturally via text or voice in Persian and English. |
-| 💳 **In-Chat Checkout State Machine** | Guided multi-turn checkout collecting recipient name, phone, address, and notes with order confirmation. |
-| 🛍️ **Cart & Order Management** | Dedicated Cart Sheet, live header badges, order tracking, and historical order details drawer. |
-| 🔍 **Multimodal RAG** | Text and image-based product discovery using 512-dim CLIP embeddings indexed in Qdrant vector database. |
-| 🧠 **Intelligent Intent & Action Routing** | Dual routing: LLM intent classifier (`products`, `store`, `faq`, `general`) + zero-temperature JSON action detector. |
-| 🎙️ **Full-Duplex Voice Chat** | Client-side Voice Activity Detection (VAD) via ONNX → Whisper STT → Commerce RAG → Edge-TTS audio reply. |
-| 🤖 **3D AI Avatar** | Interactive React Three Fiber avatar reacting dynamically with contextual facial emotions. |
-| 📦 **Deep Product Inspection** | Resizable product sidebar with SKU variant selector (colors, sizes, pricing), image previews, and real-time stock info. |
-| 💬 **Session & History Search** | Persistent sessions with pin, rename, full-text history search, and message-level citations. |
-| 🔐 **Auth & User Profiles** | JWT authentication, bcrypt password hashing, email verification, and profile avatar uploads. |
-| ⚡ **Modern Clinick Chat Shell** | Accessible Radix UI + shadcn/ui design, dark/light themes, and responsive mobile-first drawer navigation. |
-| ⚙️ **Admin Ingestion Suite** | Background embedding engine for AliExpress-style product feeds, branch metadata, and FAQ documents. |
+| **Conversational Commerce** | Add, remove, view, and update cart items naturally via text or voice in Persian and English. |
+| **In-Chat Checkout State Machine** | Guided multi-turn checkout collecting recipient name, phone, address, and notes with order confirmation. |
+| **Cart & Order Management** | Dedicated Cart Sheet, live header badges, order tracking, and historical order details drawer. |
+| **Multimodal RAG** | Text and image-based product discovery using 512-dim CLIP embeddings indexed in Qdrant vector database. |
+| **Intelligent Intent & Action Routing** | Dual routing: LLM intent classifier (`products`, `store`, `faq`, `general`) + zero-temperature JSON action detector. |
+| **Full-Duplex Voice Chat** | Client-side Voice Activity Detection (VAD) via ONNX → Whisper STT → Commerce RAG → Edge-TTS audio reply. |
+| **3D AI Avatar** | Interactive React Three Fiber avatar reacting dynamically with contextual facial emotions. |
+| **Deep Product Inspection** | Resizable product sidebar with SKU variant selector (colors, sizes, pricing), image previews, and real-time stock info. |
+| **Session & History Search** | Persistent sessions with pin, rename, full-text history search, and message-level citations. |
+| **Auth & User Profiles** | JWT authentication, bcrypt password hashing, email verification, and profile avatar uploads. |
+| **Modern Clinick Chat Shell** | Accessible Radix UI + shadcn/ui design, dark/light themes, and responsive mobile-first drawer navigation. |
+| **Admin Ingestion Suite** | Background embedding engine for AliExpress-style product feeds, branch metadata, and FAQ documents. |
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ```mermaid
 flowchart TB
@@ -94,7 +94,7 @@ flowchart TB
     CLIP --> HF
 ```
 
-### 🔄 End-to-End Request Pipeline
+### End-to-End Request Pipeline
 
 1. **User Query Input**: The user sends a text query, an image attachment, or a recorded voice clip.
 2. **Audio Transcription (Voice)**: Voice clips are converted via FFmpeg and transcribed by `faster-whisper`.
@@ -114,7 +114,7 @@ flowchart TB
 
 ---
 
-## 🔄 In-Chat Checkout State Machine
+## In-Chat Checkout State Machine
 
 The checkout flow is managed through a state machine stored in `chat_sessions.checkout_state`:
 
@@ -142,7 +142,7 @@ stateDiagram-v2
 
 ---
 
-## 🗄️ Qdrant Collections & Vector Schemas
+## Qdrant Collections & Vector Schemas
 
 | Collection | Purpose | Vector Dim | Distance | Payload Fields |
 |------------|---------|------------|----------|----------------|
@@ -152,9 +152,9 @@ stateDiagram-v2
 
 ---
 
-## 🛠️ Tech Stack
+## Tech Stack
 
-### ⚙️ Backend
+### Backend
 - **Framework**: FastAPI (asynchronous endpoints, streaming SSE, multipart form handling)
 - **Database & ORM**: SQLAlchemy 2.0 with SQLite (WAL mode, auto-schema migration on startup)
 - **Vector Search**: Qdrant (`qdrant-client`) with distance filtering and score thresholds
@@ -164,7 +164,7 @@ stateDiagram-v2
 - **Text-to-Speech**: `edge-tts` (Persian `fa-IR-DilaraNeural`, English `en-US-JennyNeural`, Turkish `tr-TR-EmelNeural`)
 - **Testing**: `pytest` with FastAPI TestClient
 
-### 🎨 Frontend
+### Frontend
 - **Framework**: Next.js 14 (App Router) + TypeScript
 - **Styling & Components**: Tailwind CSS, Radix UI Primitives, shadcn/ui, Lucide Icons
 - **3D Graphics**: Three.js, React Three Fiber (`@react-three/fiber`), `@react-three/drei`
@@ -174,70 +174,70 @@ stateDiagram-v2
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 .
-├── backend/
-│   ├── app/
-│   │   ├── api/
-│   │   │   ├── auth.py             # User registration, login, profile, avatars
-│   │   │   ├── cart.py             # Cart CRUD endpoints (/api/cart)
-│   │   │   ├── chat.py             # Chat streaming, session messages, commerce routing
-│   │   │   ├── ingest.py           # Product catalog, store, and FAQ embedding pipelines
-│   │   │   ├── orders.py           # Order creation & history endpoints (/api/orders)
-│   │   │   ├── search.py           # Standalone multimodal search API
-│   │   │   └── settings.py         # System configuration & threshold inspection
-│   │   ├── core/
-│   │   │   ├── database.py         # Engine, sessionmaker, and Base
-│   │   │   └── security.py         # Password hashing & JWT token management
-│   │   ├── ingestion/
-│   │   │   ├── clip_embedder.py    # Singleton CLIP model loader (torch/transformers)
-│   │   │   ├── json_loader.py      # AliExpress JSON parser & data sanitization
-│   │   │   └── qdrant_store.py     # Qdrant collection lifecycle & point upsertion
-│   │   ├── models/                 # SQLAlchemy ORM models (User, Session, Message, Cart, Order)
-│   │   ├── schemas/                # Pydantic v2 validation models
-│   │   ├── services/
-│   │   │   ├── checkout_state.py   # State machine for conversational multi-turn checkout
-│   │   │   ├── commerce.py         # Shared business logic for cart and order operations
-│   │   │   ├── commerce_actions.py # NLP commerce intent extraction & product resolution
-│   │   │   ├── rag.py              # Knowledge retrieval, prompt construction & LLM calling
-│   │   │   ├── stt.py              # Whisper speech-to-text handler & audio conversion
-│   │   │   └── tts.py              # Edge-TTS speech generation
-│   │   ├── config.py               # Global settings from environment variables
-│   │   ├── main.py                 # FastAPI application instance, lifespan & CORS
-│   │   └── proxy_env.py            # Proxy sanitizer for resilient network connections
-│   ├── tests/                      # Comprehensive pytest test suite
-│   ├── requirements.txt            # Python dependencies
-│   └── .env                        # Backend environment configuration
-│
-├── frontend/
-│   ├── app/
-│   │   ├── (dashboard)/
-│   │   │   ├── chat/               # Main conversational workspace & sessions
-│   │   │   ├── profile/            # User profile, password, and avatar management
-│   │   │   └── settings/           # Admin ingestion management and threshold inspection
-│   │   ├── auth/                   # Login, register, and verification pages
-│   │   └── layout.tsx              # Root HTML layout and providers
-│   ├── components/
-│   │   ├── avatar/                 # 3D interactive AI avatar (Canvas, GLTF loader)
-│   │   ├── cart/                   # CartSheet drawer & CartHeaderButton badge
-│   │   ├── chat/                   # ChatPanel, MessageInput, ProductSidebar, SessionSidebar
-│   │   ├── orders/                 # OrdersSheet drawer & OrdersHeaderButton
-│   │   └── ui/                     # Accessible shadcn/ui components
-│   ├── contexts/                   # CartContext & OrdersContext
-│   ├── lib/                        # API client, commerceChat parser, and auth helpers
-│   └── public/images/              # Project screenshots and branding
-│
-└── data/
-    ├── AE_Data/                    # Sample product catalog JSON files
-    ├── store.json                  # Physical store branches & policies
-    └── faq.json                    # Customer support FAQs
+ backend/
+    app/
+       api/
+          auth.py             # User registration, login, profile, avatars
+          cart.py             # Cart CRUD endpoints (/api/cart)
+          chat.py             # Chat streaming, session messages, commerce routing
+          ingest.py           # Product catalog, store, and FAQ embedding pipelines
+          orders.py           # Order creation & history endpoints (/api/orders)
+          search.py           # Standalone multimodal search API
+          settings.py         # System configuration & threshold inspection
+       core/
+          database.py         # Engine, sessionmaker, and Base
+          security.py         # Password hashing & JWT token management
+       ingestion/
+          clip_embedder.py    # Singleton CLIP model loader (torch/transformers)
+          json_loader.py      # AliExpress JSON parser & data sanitization
+          qdrant_store.py     # Qdrant collection lifecycle & point upsertion
+       models/                 # SQLAlchemy ORM models (User, Session, Message, Cart, Order)
+       schemas/                # Pydantic v2 validation models
+       services/
+          checkout_state.py   # State machine for conversational multi-turn checkout
+          commerce.py         # Shared business logic for cart and order operations
+          commerce_actions.py # NLP commerce intent extraction & product resolution
+          rag.py              # Knowledge retrieval, prompt construction & LLM calling
+          stt.py              # Whisper speech-to-text handler & audio conversion
+          tts.py              # Edge-TTS speech generation
+       config.py               # Global settings from environment variables
+       main.py                 # FastAPI application instance, lifespan & CORS
+       proxy_env.py            # Proxy sanitizer for resilient network connections
+    tests/                      # Comprehensive pytest test suite
+    requirements.txt            # Python dependencies
+    .env                        # Backend environment configuration
+
+ frontend/
+    app/
+       (dashboard)/
+          chat/               # Main conversational workspace & sessions
+          profile/            # User profile, password, and avatar management
+          settings/           # Admin ingestion management and threshold inspection
+       auth/                   # Login, register, and verification pages
+       layout.tsx              # Root HTML layout and providers
+    components/
+       avatar/                 # 3D interactive AI avatar (Canvas, GLTF loader)
+       cart/                   # CartSheet drawer & CartHeaderButton badge
+       chat/                   # ChatPanel, MessageInput, ProductSidebar, SessionSidebar
+       orders/                 # OrdersSheet drawer & OrdersHeaderButton
+       ui/                     # Accessible shadcn/ui components
+    contexts/                   # CartContext & OrdersContext
+    lib/                        # API client, commerceChat parser, and auth helpers
+    public/images/              # Project screenshots and branding
+
+ data/
+     AE_Data/                    # Sample product catalog JSON files
+     store.json                  # Physical store branches & policies
+     faq.json                    # Customer support FAQs
 ```
 
 ---
 
-## 📋 Prerequisites
+## Prerequisites
 
 | Requirement | Notes |
 |-------------|-------|
@@ -250,16 +250,16 @@ stateDiagram-v2
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
-### 1️⃣ Clone & Navigate
+### 1. Clone & Navigate
 
 ```bash
 git clone <your-repo-url>
 cd "RAG (new )"
 ```
 
-### 2️⃣ Run Qdrant Vector Database
+### 2. Run Qdrant Vector Database
 
 ```bash
 # Using Docker (Recommended)
@@ -270,7 +270,7 @@ docker run -d --name qdrant -p 6333:6333 -p 6334:6334 \
 
 Qdrant Web Console: [http://localhost:6333/dashboard](http://localhost:6333/dashboard)
 
-### 3️⃣ Backend Setup
+### 3. Backend Setup
 
 ```bash
 cd backend
@@ -329,7 +329,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 Swagger API documentation will be available at [http://localhost:8000/docs](http://localhost:8000/docs).
 
-### 4️⃣ Frontend Setup
+### 4. Frontend Setup
 
 ```bash
 cd ../frontend
@@ -339,7 +339,7 @@ npm run dev
 
 Open the application at [http://localhost:3000](http://localhost:3000).
 
-### 5️⃣ Ingest Catalog into Qdrant
+### 5. Ingest Catalog into Qdrant
 
 1. Sign up or log in to the web interface.
 2. Navigate to **Settings → Data Ingestion**.
@@ -360,9 +360,9 @@ curl -X POST "http://localhost:8000/api/ingest/store-faq" \
 
 ---
 
-## 📖 Conversational Commerce & Usage Guide
+## Conversational Commerce & Usage Guide
 
-### 🛒 In-Chat Cart & Ordering
+### In-Chat Cart & Ordering
 PARAK supports natural, fluid conversational shopping in both Persian and English:
 
 - **Add to Cart**:
@@ -382,21 +382,21 @@ PARAK supports natural, fluid conversational shopping in both Persian and Englis
   - User says *"تایید می‌کنم"* or *"ثبت نهایی کن"* → Order is saved as `pending`, cart is cleared, and an order receipt is returned.
   - User says *"انصراف"* or *"کنسل کن"* → Checkout is aborted and state returns to `idle`.
 
-### 🛍️ Cart Sheet & Orders Drawer
+### Cart Sheet & Orders Drawer
 - **Cart Sheet**: Click the cart icon in the header to view items, modify quantities, remove products, and review price subtotals in real-time.
 - **Orders Drawer**: Click the orders icon to view past orders, track order statuses (`pending`, `completed`), and inspect line items.
 
-### 🖼️ Visual / Multimodal Search
+### Visual / Multimodal Search
 Upload any image (clothing, furniture, gadgets) by clicking the attachment icon. CLIP generates visual embeddings and Qdrant retrieves visually and stylistically similar items from the catalog.
 
-### 🎙️ Full-Duplex Voice Chat
+### Full-Duplex Voice Chat
 Click the microphone icon to initiate hands-free shopping. Speak naturally in Persian or English; local VAD detects speech boundaries, transcribes via Whisper, conducts RAG retrieval, and replies in high-fidelity neural speech.
 
 ---
 
-## 🔌 API Reference
+## API Reference
 
-### 🔐 Authentication (`/api/auth`)
+### Authentication (`/api/auth`)
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/api/auth/register` | Register a new user account |
@@ -405,7 +405,7 @@ Click the microphone icon to initiate hands-free shopping. Speak naturally in Pe
 | `PATCH`| `/api/auth/profile` | Update profile information |
 | `POST` | `/api/auth/avatar` | Upload user profile picture |
 
-### 💬 Chat & Voice (`/api`)
+### Chat & Voice (`/api`)
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/api/chat` | Send conversational message (supports text, image, selected products, and sidebar product) |
@@ -416,7 +416,7 @@ Click the microphone icon to initiate hands-free shopping. Speak naturally in Pe
 | `PATCH`| `/api/sessions/{id}` | Update session title or pinned state |
 | `DELETE`| `/api/sessions/{id}` | Delete a chat session and its history |
 
-### 🛒 Cart (`/api/cart`)
+### Cart (`/api/cart`)
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET`  | `/api/cart` | Retrieve user cart with item count, line items, and checkout readiness |
@@ -424,13 +424,13 @@ Click the microphone icon to initiate hands-free shopping. Speak naturally in Pe
 | `PATCH`| `/api/cart/items/{item_id}` | Update quantity of a cart item |
 | `DELETE`| `/api/cart/items/{item_id}`| Remove specific item from cart |
 
-### 📦 Orders (`/api/orders`)
+### Orders (`/api/orders`)
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET`  | `/api/orders` | List order history for current user (newest first) |
 | `POST` | `/api/orders` | Create a new pending order from the current cart |
 
-### ⚙️ Ingestion & Search (`/api`)
+### Ingestion & Search (`/api`)
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/api/search` | Multimodal vector search for catalog products |
@@ -441,7 +441,7 @@ Click the microphone icon to initiate hands-free shopping. Speak naturally in Pe
 
 ---
 
-## 🧪 Testing
+## Testing
 
 The backend includes a comprehensive test suite covering commerce action detection, cart CRUD, checkout state machine transitions, and order creation:
 
@@ -459,7 +459,7 @@ Key test modules:
 
 ---
 
-## ⚙️ Configuration Reference
+## Configuration Reference
 
 | Environment Variable | Default Value | Description |
 |----------------------|---------------|-------------|
@@ -480,13 +480,13 @@ Key test modules:
 
 ---
 
-## 📄 License
+## License
 
 This project is licensed for educational and demonstration purposes. Product data models and samples are structured around standard e-commerce formats.
 
 ---
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - [OpenAI CLIP](https://github.com/openai/CLIP) via HuggingFace Transformers
 - [Qdrant](https://qdrant.tech/) Vector Search Engine
