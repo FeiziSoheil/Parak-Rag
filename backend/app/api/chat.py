@@ -39,8 +39,13 @@ from app.services.rag import (
     detect_language_with_llm,
     detect_emotion_with_llm,
 )
-from app.services.checkout_state import load_checkout_state
-from app.services.commerce_actions import clear_pending_add, detect_commerce_action, execute_commerce_action
+from app.services.checkout_state import load_checkout_state, pending_variant_options
+from app.services.commerce_actions import (
+    clear_pending_add,
+    detect_commerce_action,
+    detect_variant_reply_action,
+    execute_commerce_action,
+)
 from app.services.stt import transcribe_audio
 from app.services.tts import text_to_speech_to_bytes
 
@@ -50,23 +55,23 @@ _logger = logging.getLogger(__name__)
 
 
 def _llm_error_detail(exc: BaseException) -> str:
-    """Human-readable message from OpenRouter / OpenAI client errors."""
+    """Human-readable message from AvalAI / OpenAI client errors."""
     from openai import APIConnectionError, APIStatusError, AuthenticationError, RateLimitError
 
     if isinstance(exc, ValueError):
         return str(exc)
     if isinstance(exc, AuthenticationError):
         return (
-            "OpenRouter API key is invalid or expired. "
-            "Update OPENROUTER_API_KEY in backend/.env and restart the server."
+            "AvalAI API key is invalid or expired. "
+            "Update AVALAI_API_KEY in backend/.env and restart the server."
         )
     if isinstance(exc, RateLimitError):
         return (
-            "OpenRouter rate limit (common on free models). Wait 1–2 minutes, "
-            "or set OPENROUTER_MODEL=openrouter/free in backend/.env"
+            "AvalAI rate limit or credit exhausted. Wait a moment, "
+            "or top up at https://ava.al/billing / change AVALAI_MODEL in backend/.env"
         )
     if isinstance(exc, APIConnectionError):
-        return "Could not reach OpenRouter. Check internet connection or VPN/proxy."
+        return "Could not reach AvalAI. Check internet connection or VPN/proxy."
     if isinstance(exc, APIStatusError):
         msg = str(exc)
         body = getattr(exc, "body", None)
@@ -77,13 +82,13 @@ def _llm_error_detail(exc: BaseException) -> str:
             elif err:
                 msg = str(err)
         code = getattr(exc, "status_code", None)
-        prefix = f"OpenRouter HTTP {code}: " if code else "OpenRouter: "
+        prefix = f"AvalAI HTTP {code}: " if code else "AvalAI: "
         return prefix + msg
     return f"AI service error: {exc}"
 
 
 def _raise_llm_http_error(exc: BaseException) -> None:
-    """Map OpenRouter/OpenAI client errors to API responses (avoid opaque 500s)."""
+    """Map AvalAI/OpenAI client errors to API responses (avoid opaque 500s)."""
     _logger.exception("LLM request failed")
     raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -258,10 +263,22 @@ async def _run_chat_response(
     search_text = None if user_text == "(user sent an image)" else (user_text or None)
 
     if not image_bytes:
-        action = await loop.run_in_executor(
-            _executor,
-            lambda text=user_text, current=detect_phase: detect_commerce_action(text, current),
-        )
+        # While a variant question is pending, let the LLM match the reply
+        # against the exact options we showed (ordinals, colors, sizes).
+        variant_action = None
+        options = pending_variant_options(checkout) if detect_phase == "awaiting_variant" else []
+        if options:
+            variant_action = await loop.run_in_executor(
+                _executor,
+                lambda text=user_text, opts=list(options): detect_variant_reply_action(text, opts),
+            )
+        if variant_action is not None:
+            action = variant_action
+        else:
+            action = await loop.run_in_executor(
+                _executor,
+                lambda text=user_text, current=detect_phase: detect_commerce_action(text, current),
+            )
         if action.get("action") == "none" and checkout.get("pending_add"):
             clear_pending_add(db, session)
         if action.get("action") != "none":
@@ -272,6 +289,7 @@ async def _run_chat_response(
                 action,
                 attached_products=attached_products,
                 sidebar_product=sidebar_product,
+                user_message=user_text,
             )
             emotion = await loop.run_in_executor(
                 _executor,

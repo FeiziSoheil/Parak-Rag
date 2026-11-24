@@ -188,8 +188,9 @@ const MessageInputInner = forwardRef<MessageInputHandle, Props>(function Message
     const ta = textareaRef.current;
     if (!ta) return;
     ta.style.height = "auto";
+    const minHeight = 32; // match h-8 / icon buttons
     const maxHeight = 112; // 7rem
-    ta.style.height = `${Math.min(ta.scrollHeight, maxHeight)}px`;
+    ta.style.height = `${Math.min(Math.max(ta.scrollHeight, minHeight), maxHeight)}px`;
   }, [text]);
 
   // Start or stop VAD when entering/leaving voice mode
@@ -319,13 +320,13 @@ const MessageInputInner = forwardRef<MessageInputHandle, Props>(function Message
   }
 
   return (
-    <div className="sticky bottom-0 left-0 right-0 p-3 sm:p-4 flex justify-center bg-background shadow-none">
+    <div className="sticky bottom-0 left-0 right-0 py-3 sm:py-4 flex justify-center bg-transparent">
       <form
         onSubmit={handleSubmit}
-        className="w-full max-w-[min(100%,28rem)] focus-within:max-w-[min(100%,42rem)] bg-background/95 dark:bg-background/90 backdrop-blur-sm shadow-none p-3 sm:p-4 transition-[max-width] duration-300 ease-out"
+        className="w-full max-w-[min(100%,28rem)] focus-within:max-w-[min(100%,42rem)] transition-[max-width] duration-300 ease-out"
       >
         {(attachedProducts.length > 0 || imageFile) && (
-          <div className="mb-3 flex flex-wrap items-center gap-2 animate-slide-down">
+          <div className="mb-2 flex flex-wrap items-center gap-2 animate-slide-down">
             {attachedProducts.map((p) => (
               <div
                 key={p.product_id}
@@ -389,7 +390,7 @@ const MessageInputInner = forwardRef<MessageInputHandle, Props>(function Message
             )}
           </div>
         )}
-        <div className="flex items-end py-1.5 px-2 gap-1 rounded-2xl border border-border bg-background focus-within:border-foreground/15 focus-within:ring-1 focus-within:ring-ring/15 transition-all overflow-hidden">
+        <div className="flex items-center gap-1 rounded-2xl border border-border bg-background px-2 py-1.5 focus-within:border-foreground/15 focus-within:ring-1 focus-within:ring-ring/15 transition-all overflow-hidden">
         <input
           ref={fileInputRef}
           type="file"
@@ -403,7 +404,7 @@ const MessageInputInner = forwardRef<MessageInputHandle, Props>(function Message
               type="button"
               onClick={() => fileInputRef.current?.click()}
               disabled={disabled || sending || voiceModeActive}
-              className="flex items-center justify-center w-8 h-8 shrink-0 text-muted-foreground hover:text-foreground rounded-lg transition-colors disabled:opacity-50 disabled:pointer-events-none ml-0.5"
+              className="flex items-center justify-center w-8 h-8 shrink-0 self-end text-muted-foreground hover:text-foreground rounded-lg transition-colors disabled:opacity-50 disabled:pointer-events-none ml-0.5"
               aria-label="Attach image"
             >
               <IconImage />
@@ -422,7 +423,7 @@ const MessageInputInner = forwardRef<MessageInputHandle, Props>(function Message
           onKeyDown={handleKeyDown}
           placeholder="Message… (Click / to focus)"
           rows={1}
-          className="!min-h-[22px] max-h-28 resize-none flex-1 rounded-none border-0 bg-transparent shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 py-1.5 px-2 text-sm placeholder:text-muted-foreground leading-tight"
+          className="!min-h-8 max-h-28 min-h-8 h-8 resize-none flex-1 rounded-none border-0 bg-transparent shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 !py-1.5 px-2 text-sm placeholder:text-muted-foreground leading-tight"
           disabled={disabled || sending || voiceModeActive}
         />
         {showSendButton ? (
@@ -431,7 +432,7 @@ const MessageInputInner = forwardRef<MessageInputHandle, Props>(function Message
               <button
                 type="submit"
                 disabled={!hasContent || sending || disabled || voiceModeActive}
-                className="flex items-center justify-center w-8 h-8 shrink-0 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:pointer-events-none mr-0.5"
+                className="flex items-center justify-center w-8 h-8 shrink-0 self-end rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:pointer-events-none mr-0.5"
                 aria-label="Send message"
               >
                 {sending ? (
@@ -476,7 +477,7 @@ const MessageInputInner = forwardRef<MessageInputHandle, Props>(function Message
                     type="button"
                     onClick={handleMicClick}
                     disabled={disabled || (sending && !voiceModeActive)}
-                    className={`flex items-center justify-center w-8 h-8 shrink-0 rounded-xl transition-colors disabled:opacity-50 disabled:pointer-events-none mr-0.5 ${
+                    className={`flex items-center justify-center w-8 h-8 shrink-0 self-end rounded-xl transition-colors disabled:opacity-50 disabled:pointer-events-none mr-0.5 ${
                       vadError
                         ? "text-destructive bg-destructive/15 hover:bg-destructive/25"
                         : voiceState === "idle"
@@ -516,7 +517,7 @@ const MessageInputInner = forwardRef<MessageInputHandle, Props>(function Message
               <button
                 type="submit"
                 disabled={!hasContent || sending || disabled}
-                className="flex items-center justify-center w-8 h-8 shrink-0 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:pointer-events-none mr-0.5"
+                className="flex items-center justify-center w-8 h-8 shrink-0 self-end rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:pointer-events-none mr-0.5"
                 aria-label="Send message"
               >
                 {sending ? (

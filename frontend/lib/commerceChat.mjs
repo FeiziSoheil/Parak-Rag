@@ -32,8 +32,11 @@ export function buildSidebarProduct(product, selectedVariant) {
 
 export function commerceFollowUp(result) {
   const orderId = result && result.order && result.order.id != null ? result.order.id : null;
+  const reply = typeof result?.message === "string" ? result.message : "";
+  const persian = /[\u0600-\u06FF]/.test(reply);
   return {
     refreshCart: Boolean(result && result.cart_updated),
-    orderToast: orderId != null ? `Order #${orderId} placed` : null,
+    orderToast:
+      orderId != null ? (persian ? `سفارش #${orderId} ثبت شد` : `Order #${orderId} placed`) : null,
   };
 }

@@ -99,8 +99,6 @@ export function ProductSidebar({ product, onClose, onVariantChange }: Props) {
   const hasVariants = !!(product.variants && product.variants.length > 0);
   const [selectedVariantIndex, setSelectedVariantIndex] = useState<number | null>(null);
   const [adding, setAdding] = useState(false);
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
   useEffect(() => {
     setSelectedVariantIndex(null);
     onVariantChange?.(null);
@@ -140,11 +138,8 @@ export function ProductSidebar({ product, onClose, onVariantChange }: Props) {
   }
 
   return (
-    <aside
-      className="w-full min-w-0 border-l border-border bg-card/50 flex flex-col h-full overflow-hidden transition-opacity duration-300 ease-in-out"
-      style={{ opacity: mounted ? 1 : 0 }}
-    >
-      <div className="shrink-0 flex items-center justify-between gap-2 p-3 border-b border-border">
+    <aside className="w-full min-w-0 bg-transparent flex flex-col h-full overflow-hidden">
+      <div className="shrink-0 flex items-center justify-between gap-2 p-3 border-b border-border/60">
         <span className="text-sm font-medium text-foreground">Product details</span>
         <Button
           type="button"
@@ -263,7 +258,7 @@ export function ProductSidebar({ product, onClose, onVariantChange }: Props) {
           </div>
         )}
       </div>
-      <div className="shrink-0 p-3 border-t border-border">
+      <div className="shrink-0 p-3 border-t border-border/60">
         <Button
           type="button"
           className="w-full"

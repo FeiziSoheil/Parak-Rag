@@ -19,11 +19,18 @@ def test_empty_and_invalid_are_idle():
         "address": None,
         "note": None,
         "next_slot": None,
+        "lang": "en",
     }
     assert load_checkout_state(None) == idle
     assert load_checkout_state("") == idle
     assert load_checkout_state("not-json") == idle
     assert load_checkout_state("[]") == idle
+
+
+def test_load_keeps_language_and_drops_bad_lang():
+    raw = dump_checkout_state({**empty_state(), "lang": "fa"})
+    assert load_checkout_state(raw)["lang"] == "fa"
+    assert load_checkout_state('{"lang":"de"}')["lang"] == "en"
 
 
 def test_load_keeps_valid_fields_and_drops_bad_phase():

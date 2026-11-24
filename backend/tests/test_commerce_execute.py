@@ -59,6 +59,7 @@ def _run(db, user, session, action, **kwargs):
         attached_products=kwargs.get("attached", []),
         sidebar_product=kwargs.get("sidebar"),
         recent_products=kwargs.get("recent"),
+        user_message=kwargs.get("user_message"),
     )
 
 
@@ -266,6 +267,79 @@ def test_confirm_places_pending_order_then_cancel_keeps_cart(db_session, user_a)
     assert db_session.query(Order).count() == 1
 
 
+def test_persian_user_gets_persian_checkout_flow(db_session, user_a):
+    session = _session(db_session, user_a)
+    turn = _run(
+        db_session,
+        user_a,
+        session,
+        {"action": "cart_add"},
+        attached=[MUG],
+        user_message="همین رو به سبد اضافه کن",
+    )
+    assert "به سبد خرید اضافه شد" in turn.message
+
+    started = _run(db_session, user_a, session, {"action": "checkout_start"}, user_message="سفارش بده")
+    assert started.checkout_phase == "collecting"
+    assert started.message == "این سفارش برای چه کسی است؟ لطفاً نام و نام خانوادگی گیرنده را بفرستید."
+
+    named = _run(
+        db_session,
+        user_a,
+        session,
+        {"action": "checkout_fill", "slots": {"recipient_name": "سهرل فیضی"}},
+        user_message="سهرل فیضی",
+    )
+    assert named.message == "برای ارسال سفارش، چه شماره تماسی را استفاده کنیم؟"
+
+    # Numbers-only follow-up (a phone number) must stay Persian via session lang.
+    phone = _run(
+        db_session,
+        user_a,
+        session,
+        {"action": "checkout_fill", "slots": {"phone": "09142895825"}},
+        user_message="09142895825",
+    )
+    assert phone.message == "آدرس تحویل سفارش چیست؟"
+
+    address = _run(
+        db_session,
+        user_a,
+        session,
+        {"action": "checkout_fill", "slots": {"address": "تهران، ولیعصر"}},
+        user_message="تهران، ولیعصر",
+    )
+    assert address.checkout_phase == "awaiting_confirm"
+    assert "لطفاً این سفارش را تأیید کنید:" in address.message
+    assert "گیرنده: سهرل فیضی" in address.message
+    assert "شماره تماس: 09142895825" in address.message
+    assert "آدرس: تهران، ولیعصر" in address.message
+    assert "برای ثبت سفارش «تایید»" in address.message
+
+    placed = _run(db_session, user_a, session, {"action": "order_confirm"}, user_message="تایید")
+    assert placed.order["status"] == "pending"
+    assert f"سفارش #{placed.order['id']} ثبت شد" in placed.message
+    assert "وضعیت: در انتظار بررسی" in placed.message
+    assert db_session.query(Order).count() == 1
+    db_session.refresh(session)
+    state = load_checkout_state(session.checkout_state)
+    assert state["phase"] == "idle"
+    assert state["lang"] == "fa"
+
+    cancelled = _run(db_session, user_a, session, {"action": "order_cancel"}, user_message="لغو")
+    assert cancelled.message == "فرآیند سفارش لغو شد. سبد خرید شما تغییری نکرده است."
+
+
+def test_english_turn_switches_back_and_numbers_only_defaults_english(db_session, user_a):
+    session = _session(db_session, user_a)
+    fa = _run(db_session, user_a, session, {"action": "cart_view"}, user_message="سبد خریدم رو نشون بده")
+    assert fa.message == "سبد خرید شما خالی است."
+    en = _run(db_session, user_a, session, {"action": "cart_view"}, user_message="show my cart")
+    assert en.message == "Your cart is empty."
+    numbers = _run(db_session, user_a, session, {"action": "cart_view"}, user_message="123456")
+    assert numbers.message == "Your cart is empty."
+
+
 def _shown_shoes():
     return [
         {"product_id": 11, "subject": "Trail Shoe", "price": 30.0, "image_url": None, "category_name": "Shoes", "variants": []},
@@ -343,4 +417,130 @@ def test_add_first_size_40_clarifies_only_that_size(db_session, user_a):
     assert "Size: 45" not in turn.message
     assert turn.message.count("Size: 40") == 3
     assert db_session.query(CartItem).filter(CartItem.user_id == user_a.id).count() == 0
+
+
+def test_order_by_product_name_pins_named_card(db_session, user_a):
+    """Screenshot regression: «همین IMICE رو برام سفارش بده» with several shown
+    cards must add the IMICE product, not answer "cart is empty"."""
+    recent = [
+        {"product_id": 51, "subject": "adidas Runner", "price": 60.0, "image_url": None, "category_name": "Shoes", "variants": []},
+        {"product_id": 52, "subject": "IMICE Gaming Mouse", "price": 15.0, "image_url": None, "category_name": "Mouse", "variants": []},
+        {"product_id": 53, "subject": "Logitech Keyboard", "price": 25.0, "image_url": None, "category_name": "Keyboard", "variants": []},
+    ]
+    session = _session(db_session, user_a)
+    action = detect_commerce_action(
+        "همین IMICE رو برام سفارش بده",
+        "idle",
+        complete=lambda prompt: '{"action":"none"}',
+    )
+    turn = _run(db_session, user_a, session, action, recent=recent, user_message="همین IMICE رو برام سفارش بده")
+    assert turn.order is None
+    assert "سبد خرید شما خالی است" not in turn.message
+    item = db_session.query(CartItem).filter(CartItem.user_id == user_a.id).one()
+    assert item.product_id == 52
+    assert "IMICE Gaming Mouse" in turn.message
+
+
+def test_add_by_product_name_resolves_without_clarify(db_session, user_a):
+    recent = [
+        {"product_id": 61, "subject": "adidas Runner", "price": 60.0, "image_url": None, "category_name": "Shoes", "variants": []},
+        {"product_id": 62, "subject": "IMICE Gaming Mouse", "price": 15.0, "image_url": None, "category_name": "Mouse", "variants": []},
+    ]
+    session = _session(db_session, user_a)
+    action = detect_commerce_action(
+        "همین IMICE رو به سبد اضافه کن",
+        "idle",
+        complete=lambda prompt: '{"action":"none"}',
+    )
+    turn = _run(db_session, user_a, session, action, recent=recent, user_message="همین IMICE رو به سبد اضافه کن")
+    assert turn.cart_updated is True
+    item = db_session.query(CartItem).filter(CartItem.user_id == user_a.id).one()
+    assert item.product_id == 62
+
+
+def test_add_without_name_or_ordinal_still_clarifies(db_session, user_a):
+    recent = [
+        {"product_id": 71, "subject": "Trail Shoe", "price": 30.0, "image_url": None, "category_name": "Shoes", "variants": []},
+        {"product_id": 72, "subject": "Court Shoe", "price": 40.0, "image_url": None, "category_name": "Shoes", "variants": []},
+    ]
+    session = _session(db_session, user_a)
+    action = detect_commerce_action(
+        "همین مدل رو به سبد اضافه کن",
+        "idle",
+        complete=lambda prompt: '{"action":"none"}',
+    )
+    turn = _run(db_session, user_a, session, action, recent=recent, user_message="همین مدل رو به سبد اضافه کن")
+    assert turn.cart_updated is False
+    assert "کدام محصول" in turn.message
+    assert db_session.query(CartItem).filter(CartItem.user_id == user_a.id).count() == 0
     assert db_session.query(Order).count() == 0
+
+
+def test_order_history_action_lists_user_orders(db_session, user_a, user_b):
+    from app.models.order import OrderItem
+
+    session = _session(db_session, user_a)
+
+    # Empty history first.
+    empty = _run(db_session, user_a, session, {"action": "order_history"})
+    assert "haven't placed any orders" in empty.message
+
+    def _make_order(user, subject, price, qty):
+        order = Order(
+            user_id=user.id,
+            status="pending",
+            recipient_name="Alice",
+            phone="+98912",
+            address="Tehran",
+            total_amount=price * qty,
+        )
+        db_session.add(order)
+        db_session.flush()
+        db_session.add(
+            OrderItem(
+                order_id=order.id,
+                product_id=999,
+                subject=subject,
+                unit_price=price,
+                image_url=None,
+                category_name="Home",
+                variant_label="Color: Blue",
+                quantity=qty,
+            )
+        )
+        db_session.commit()
+        db_session.refresh(order)
+        return order
+
+    old = _make_order(user_a, "Blue Mug", 10.0, 2)
+    new = _make_order(user_a, "IMICE Mouse", 27.5, 1)
+    other = _make_order(user_b, "Someone Else Mug", 5.0, 1)
+
+    turn = _run(
+        db_session,
+        user_a,
+        session,
+        {"action": "order_history"},
+        user_message="سفارش‌هام رو نشون بده",
+    )
+    lines = turn.message.splitlines()
+    # Persian user gets the Persian header; newest order first, with the
+    # localized pending status («در انتظار بررسی»).
+    assert lines[0] == "سفارش‌های شما:"
+    assert lines[1].startswith(f"#{new.id}")
+    assert "در انتظار بررسی" in lines[1]
+    assert "$27.50" in lines[1]
+    assert lines[2].strip() == "1 عدد IMICE Mouse (Color: Blue)"
+    assert lines[3].startswith(f"#{old.id}")
+    assert "$20.00" in lines[3]
+    assert lines[4].strip() == "2 عدد Blue Mug (Color: Blue)"
+    # The other user's order is never shown.
+    assert "Someone Else Mug" not in turn.message
+    assert f"#{other.id}" not in turn.message
+
+    # English turn switches the header back to English.
+    en_turn = _run(db_session, user_a, session, {"action": "order_history"}, user_message="show my orders")
+    en_lines = en_turn.message.splitlines()
+    assert en_lines[0] == "Your orders:"
+    assert f"#{new.id}" in en_lines[1]
+    assert "1 × IMICE Mouse (Color: Blue)" in en_lines[2]

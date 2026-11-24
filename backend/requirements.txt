@@ -23,6 +23,9 @@ langchain-openai>=0.0.5
 httpx>=0.26.0
 sse-starlette>=1.8.0
 faster-whisper>=1.0.0
-edge-tts>=6.1.0
+# ctranslate2 4.x (faster-whisper engine) links libcublas.so.12 (CUDA 12);
+# torch cu13x wheels only ship .so.13, so this pin is required for CUDA STT.
+nvidia-cublas-cu12>=12.0.0
+edge-tts>=7.3.0
 langdetect>=1.0.0
 pytest>=8.0.0

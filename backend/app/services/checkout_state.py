@@ -5,6 +5,7 @@ OPTIONAL_SLOTS = ("note",)
 ALL_SLOTS = REQUIRED_SLOTS + OPTIONAL_SLOTS
 PHASES = ("idle", "collecting", "awaiting_confirm")
 NEXT_SLOTS = REQUIRED_SLOTS + ("note",)
+LANGS = ("en", "fa")
 
 
 def empty_state() -> dict:
@@ -15,6 +16,7 @@ def empty_state() -> dict:
         "address": None,
         "note": None,
         "next_slot": None,
+        "lang": "en",
     }
 
 
@@ -39,7 +41,9 @@ def clean_pending_add(value) -> dict | None:
         action = "cart_add"
     hint = value.get("hint")
     hint = hint.strip() if isinstance(hint, str) and hint.strip() else None
-    return {"product_id": product_id, "action": action, "hint": hint}
+    options = value.get("variant_options")
+    options = [str(option) for option in options if isinstance(option, str) and option.strip()] if isinstance(options, list) else []
+    return {"product_id": product_id, "action": action, "hint": hint, "variant_options": options}
 
 
 def load_checkout_state(raw: str | None) -> dict:
@@ -58,6 +62,8 @@ def load_checkout_state(raw: str | None) -> dict:
         state[key] = _clean_stored(data.get(key))
     next_slot = data.get("next_slot")
     state["next_slot"] = next_slot if next_slot in NEXT_SLOTS else None
+    lang = data.get("lang")
+    state["lang"] = lang if lang in LANGS else "en"
     pending = clean_pending_add(data.get("pending_add"))
     if pending:
         state["pending_add"] = pending
@@ -71,6 +77,17 @@ def dump_checkout_state(state: dict) -> str:
     if pending:
         payload["pending_add"] = pending
     return json.dumps(payload, ensure_ascii=False)
+
+
+def pending_variant_options(state: dict) -> list[str]:
+    """Variant labels shown for the pending product, in shown order (1-based)."""
+    pending = state.get("pending_add")
+    if not isinstance(pending, dict):
+        return []
+    options = pending.get("variant_options")
+    if not isinstance(options, list):
+        return []
+    return [str(option) for option in options if isinstance(option, str) and option.strip()]
 
 
 def merge_slots(state: dict, slots: dict, *, allow_clear: bool) -> dict:

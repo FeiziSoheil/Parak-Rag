@@ -675,3 +675,13 @@ export async function createOrder(body: OrderCreateInput): Promise<Order> {
   }
   return res.json();
 }
+
+export async function getOrders(): Promise<Order[]> {
+  const token = getToken();
+  if (!token) throw new Error("Not authenticated");
+  const res = await fetch(`${API_BASE}/api/orders`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error("Failed to load orders");
+  return res.json();
+}

@@ -140,3 +140,92 @@ def test_collecting_prompt_prefers_checkout_over_search():
     assert "unless the user is clearly starting a new product search" in seen["prompt"]
     assert action["action"] == "checkout_fill"
     assert action["slots"]["address"] == "Tehran, Valiasr"
+
+
+def test_finalize_phrase_is_checkout_start():
+    action = detect_commerce_action(
+        "نهایی کن",
+        "idle",
+        complete=lambda prompt: (_ for _ in ()).throw(AssertionError("llm")),
+    )
+    assert action["action"] == "checkout_start"
+
+    english = detect_commerce_action("finalize it", "idle", complete=lambda prompt: (_ for _ in ()).throw(AssertionError("llm")))
+    assert english["action"] == "checkout_start"
+
+
+def test_typo_bare_ordinal_is_cart_add_without_llm():
+    action = detect_commerce_action(
+        "همود اولی",
+        "idle",
+        complete=lambda prompt: (_ for _ in ()).throw(AssertionError("llm")),
+    )
+    assert action["action"] == "cart_add"
+    assert action["product_ref"]["hint"] == "first"
+    assert action["product_ref"]["variant_label"] is None
+
+
+def test_name_mention_order_falls_back_to_llm_hint():
+    def complete(prompt: str) -> str:
+        return '{"action":"checkout_start","product_ref":{"hint":"IMICE"}}'
+
+    action = detect_commerce_action(
+        "I'll take the IMICE mouse please",
+        "idle",
+        complete=complete,
+    )
+    assert action["action"] == "checkout_start"
+    assert action["product_ref"]["hint"] == "IMICE"
+    assert action["product_ref"]["product_id"] is None
+
+
+def test_persian_name_order_rule_starts_checkout_without_llm():
+    """«سفارش بده» fires the rule layer; the name pinning then happens at
+    execute time from the raw user message (see test_order_by_product_name_pins_named_card)."""
+    action = detect_commerce_action(
+        "همین IMICE رو برام سفارش بده",
+        "idle",
+        complete=lambda prompt: (_ for _ in ()).throw(AssertionError("llm")),
+    )
+    assert action["action"] == "checkout_start"
+    assert action["product_ref"]["product_id"] is None
+
+
+def test_order_history_phrases_are_rule_detected_without_llm():
+    def _no_llm(prompt: str) -> str:
+        raise AssertionError("llm should not be called for history phrases")
+
+    for message in (
+        "سفارش‌هام کجان",
+        "سفارش های من رو نشون بده",
+        "سفارش های قبلی رو ببین",
+        "سابقه سفارشام چیه",
+        "تاریخچه سفارش من",
+        "show my orders",
+        "track my order",
+        "order history",
+    ):
+        action = detect_commerce_action(message, "idle", complete=_no_llm)
+        assert action["action"] == "order_history", message
+
+    # History detection also wins during an active checkout flow.
+    action = detect_commerce_action("سفارش‌هام رو نشون بده", "collecting", complete=_no_llm)
+    assert action["action"] == "order_history"
+
+
+def test_new_order_phrase_still_starts_checkout_not_history():
+    """New-order requests («سفارش بده» / place an order) must not be mistaken
+    for order-history lookups by the history rules."""
+    action = detect_commerce_action(
+        "سفارش بده",
+        "idle",
+        complete=lambda prompt: (_ for _ in ()).throw(AssertionError("llm")),
+    )
+    assert action["action"] == "checkout_start"
+
+    english = detect_commerce_action(
+        "place an order for me",
+        "idle",
+        complete=lambda prompt: (_ for _ in ()).throw(AssertionError("llm")),
+    )
+    assert english["action"] == "checkout_start"

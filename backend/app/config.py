@@ -4,8 +4,12 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from app.proxy_env import sanitize_proxy_env
+
 # بارگذاری .env از پوشه backend
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+# Drop socks:// / socks5:// process proxies before any httpx client is created
+sanitize_proxy_env()
 
 # CLIP vector size: openai/clip-vit-base-patch32 -> 512, laion/CLIP-ViT-L-14 -> 768
 VECTOR_SIZE = int(os.getenv("VECTOR_SIZE", "512"))
@@ -19,11 +23,10 @@ SECRET_KEY = os.getenv("SECRET_KEY", "change-me-in-production-use-openssl-rand-h
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
 
-# OpenRouter
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-# Free tier: https://openrouter.ai/collections/free-models
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-oss-120b:free")
+# AvalAI (OpenAI-compatible) — https://api.avalai.ir/v1
+AVALAI_API_KEY = os.getenv("AVALAI_API_KEY", "")
+AVALAI_BASE_URL = os.getenv("AVALAI_BASE_URL", "https://api.avalai.ir/v1")
+AVALAI_MODEL = os.getenv("AVALAI_MODEL", "deepseek-chat")
 
 # Proxy for image download (ingestion) — اگر با VPN/پراکسی به اینترنت وصل می‌شوید، این آدرس را تنظیم کنید
 # مثال: http://127.0.0.1:10808 برای Psiphon یا V2Ray وقتی Local mixed روی 10808 است

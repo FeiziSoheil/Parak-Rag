@@ -11,6 +11,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { getCurrentUser, getSessionMessages, sendChat, sendVoiceChat, readAloud, detectIntent, voiceDetectIntent, getAvatarUrl, type ProductSummary, type ProductVariant, type UserProfile } from "@/lib/api";
 import { buildSidebarProduct, commerceFollowUp } from "@/lib/commerceChat.mjs";
 import { useCart } from "@/contexts/CartContext";
+import { cn } from "@/lib/utils";
+
+/** Match cart + main floating sidebar motion */
+const PRODUCT_PANEL_MOTION_MS = 200;
 
 function getDisplayName(user: UserProfile | null): string {
   if (!user) return "";
@@ -30,7 +34,7 @@ const SUGGESTED_PROMPTS: SuggestedPromptItem[] = [
 
 const SIDEBAR_WIDTH_MIN = 280;
 const SIDEBAR_WIDTH_MAX = 600;
-const SIDEBAR_WIDTH_DEFAULT = 320;
+const SIDEBAR_WIDTH_DEFAULT = 320; // same default width as cart panel
 
 type Props = {
   sessionId: number | null;
@@ -54,6 +58,8 @@ export function ChatPanel({ sessionId }: Props) {
   const [sidebarWidthPx, setSidebarWidthPx] = useState(SIDEBAR_WIDTH_DEFAULT);
   const [isResizing, setIsResizing] = useState(false);
   const resizeStartRef = useRef({ x: 0, width: 0 });
+  const productExpandRafRef = useRef<number | null>(null);
+  const productCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
   /** True when current request triggers Qdrant search (product/FAQ/store). Show ShinyText only then. */
@@ -278,6 +284,36 @@ export function ChatPanel({ sessionId }: Props) {
     }
   }
 
+  function clearProductMotionTimers() {
+    if (productExpandRafRef.current != null) {
+      cancelAnimationFrame(productExpandRafRef.current);
+      productExpandRafRef.current = null;
+    }
+    if (productCloseTimerRef.current != null) {
+      clearTimeout(productCloseTimerRef.current);
+      productCloseTimerRef.current = null;
+    }
+  }
+
+  function openProductSidebar(product: ProductSummary) {
+    clearProductMotionTimers();
+    const alreadyExpanded = sidebarWidthOpen && !!(sidebarProduct || closingProduct);
+    setClosingProduct(null);
+    setSidebarProduct(product);
+    if (alreadyExpanded) {
+      setSidebarWidthOpen(true);
+      return;
+    }
+    // Mount at width 0, then expand next frames (same pattern as cart)
+    setSidebarWidthOpen(false);
+    productExpandRafRef.current = requestAnimationFrame(() => {
+      productExpandRafRef.current = requestAnimationFrame(() => {
+        setSidebarWidthOpen(true);
+        productExpandRafRef.current = null;
+      });
+    });
+  }
+
   function toggleProductSelection(product: ProductSummary) {
     setSelectedProducts((prev) => {
       const exists = prev.some((p) => p.product_id === product.product_id);
@@ -286,20 +322,26 @@ export function ChatPanel({ sessionId }: Props) {
         else setSidebarProduct((current) => (current?.product_id === product.product_id ? null : current));
         return prev.filter((p) => p.product_id !== product.product_id);
       }
-      setSidebarProduct(product);
-      setSidebarWidthOpen(true);
+      openProductSidebar(product);
       return [...prev, product];
     });
   }
 
   function startCloseSidebar() {
-    if (sidebarProduct) {
-      setClosingProduct(sidebarProduct);
-      setSidebarProduct(null);
-      setSidebarWidthOpen(false);
-      setTimeout(() => setClosingProduct(null), 300);
-    }
+    if (!sidebarProduct && !closingProduct) return;
+    clearProductMotionTimers();
+    if (sidebarProduct) setClosingProduct(sidebarProduct);
+    setSidebarProduct(null);
+    setSidebarWidthOpen(false);
+    productCloseTimerRef.current = setTimeout(() => {
+      setClosingProduct(null);
+      productCloseTimerRef.current = null;
+    }, PRODUCT_PANEL_MOTION_MS);
   }
+
+  useEffect(() => {
+    return () => clearProductMotionTimers();
+  }, []);
 
   // Resize sidebar by dragging the left edge
   useEffect(() => {
@@ -508,23 +550,25 @@ export function ChatPanel({ sessionId }: Props) {
 
   if (!sessionId) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center text-center px-6">
-        <div className="max-w-md space-y-4 animate-fade-in">
-          <div className="w-12 h-12 mx-auto rounded-xl bg-muted flex items-center justify-center">
-            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-muted-foreground">
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-            </svg>
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/60 bg-card shadow-modern">
+        <div className="flex-1 flex flex-col items-center justify-center text-center px-6">
+          <div className="max-w-md space-y-4 animate-fade-in">
+            <div className="w-12 h-12 mx-auto rounded-xl bg-muted flex items-center justify-center">
+              <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-muted-foreground">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+              </svg>
+            </div>
+            <h2 className="text-base font-medium text-foreground">Start a conversation</h2>
+            {dashboardWelcome ? (
+              <p className="text-foreground/90 text-sm leading-relaxed whitespace-pre-wrap">
+                {dashboardWelcome}
+              </p>
+            ) : (
+              <p className="text-muted-foreground text-sm">
+                Select a chat or create a new one to begin.
+              </p>
+            )}
           </div>
-          <h2 className="text-base font-medium text-foreground">Start a conversation</h2>
-          {dashboardWelcome ? (
-            <p className="text-foreground/90 text-sm leading-relaxed whitespace-pre-wrap">
-              {dashboardWelcome}
-            </p>
-          ) : (
-            <p className="text-muted-foreground text-sm">
-              Select a chat or create a new one to begin.
-            </p>
-          )}
         </div>
       </div>
     );
@@ -538,8 +582,10 @@ export function ChatPanel({ sessionId }: Props) {
         ? "sleepy"
         : avatarEmotion;
 
+  const productPanelOpen = !!(sidebarProduct || closingProduct);
+
   return (
-    <div className="flex flex-row h-full flex-1 min-w-0">
+    <div className="flex flex-row h-full flex-1 min-w-0 overflow-hidden">
       <audio
         ref={readAloudAudioRef}
         className="hidden"
@@ -547,7 +593,7 @@ export function ChatPanel({ sessionId }: Props) {
         onPlay={handleAudioPlayStart}
         onEnded={handleAudioPlayEnd}
       />
-      <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+      <div className="flex-1 min-w-0 flex flex-col overflow-hidden rounded-xl border border-border/60 bg-card shadow-modern">
         <div className="flex-1 min-h-0 flex flex-col w-full max-w-4xl mx-auto px-6 sm:px-8">
           <div className="flex-1 min-h-0 flex flex-col">
             {loading ? (
@@ -613,32 +659,40 @@ export function ChatPanel({ sessionId }: Props) {
           />
         </div>
       </div>
-      <div
-        className={`flex shrink-0 h-full overflow-hidden ${isResizing ? "" : "transition-[width] duration-300 ease-in-out"}`}
-        style={{ width: sidebarWidthOpen ? sidebarWidthPx : 0 }}
-      >
-        {(sidebarProduct || closingProduct) && (
-          <>
+      {productPanelOpen && (
+        <div
+          className={cn(
+            "relative shrink-0 h-full overflow-hidden",
+            isResizing
+              ? "transition-none"
+              : "transition-[width,margin-inline-start] duration-200 ease-linear",
+            sidebarWidthOpen ? "ms-2 sm:ms-3" : "ms-0"
+          )}
+          style={{ width: sidebarWidthOpen ? sidebarWidthPx : 0 }}
+          aria-hidden={!sidebarWidthOpen}
+        >
+          <div
+            className="relative flex h-full min-w-0 flex-col overflow-hidden rounded-xl border border-border/60 bg-card shadow-modern"
+            style={{ width: sidebarWidthPx }}
+          >
             <div
               role="separator"
               aria-label="Resize sidebar"
-              className="w-1.5 shrink-0 cursor-col-resize border-l border-border bg-border/50 hover:bg-primary/20 active:bg-primary/30 transition-colors"
+              className="absolute inset-y-3 left-0 z-10 w-1.5 cursor-col-resize rounded-full bg-transparent hover:bg-primary/20 active:bg-primary/30 transition-colors"
               onMouseDown={(e) => {
                 e.preventDefault();
                 resizeStartRef.current = { x: e.clientX, width: sidebarWidthPx };
                 setIsResizing(true);
               }}
             />
-            <div className="flex-1 min-w-0 overflow-hidden">
-              <ProductSidebar
-                product={sidebarProduct ?? closingProduct!}
-                onClose={startCloseSidebar}
-                onVariantChange={handleSidebarVariant}
-              />
-            </div>
-          </>
-        )}
-      </div>
+            <ProductSidebar
+              product={sidebarProduct ?? closingProduct!}
+              onClose={startCloseSidebar}
+              onVariantChange={handleSidebarVariant}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

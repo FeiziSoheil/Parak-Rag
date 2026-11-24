@@ -49,7 +49,7 @@ def _load_with_retry(load_fn, name: str):
         try:
             logger.info("Loading %s (attempt %d/%d)...", name, attempt, HF_LOAD_RETRIES)
             return load_fn()
-        except (OSError, RuntimeError, requests.exceptions.RequestException, urllib3.exceptions.HTTPError) as e:
+        except (OSError, RuntimeError, ValueError, requests.exceptions.RequestException, urllib3.exceptions.HTTPError) as e:
             last_err = e
             if attempt < HF_LOAD_RETRIES:
                 logger.warning(

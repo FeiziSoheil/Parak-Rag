@@ -46,12 +46,28 @@ test("commerce follow-up refreshes and toasts only when the server says so", () 
     refreshCart: true,
     orderToast: null,
   });
-  assert.deepEqual(commerceFollowUp({ cart_updated: true, order: { id: 9, total_amount: 12.5, status: "pending" } }), {
-    refreshCart: true,
-    orderToast: "Order #9 placed",
-  });
+  assert.deepEqual(
+    commerceFollowUp({
+      cart_updated: true,
+      order: { id: 9, total_amount: 12.5, status: "pending" },
+      message: "Order #9 placed. Status: pending. Total: $12.50.",
+    }),
+    {
+      refreshCart: true,
+      orderToast: "Order #9 placed",
+    }
+  );
   assert.deepEqual(commerceFollowUp({ cart_updated: false }), {
     refreshCart: false,
     orderToast: null,
   });
+});
+
+test("commerce follow-up toasts in Persian when the reply is Persian", () => {
+  const follow = commerceFollowUp({
+    cart_updated: true,
+    order: { id: 9, total_amount: 12.5, status: "pending" },
+    message: "سفارش #9 ثبت شد. وضعیت: در انتظار بررسی. مبلغ کل: $12.50.",
+  });
+  assert.equal(follow.orderToast, "سفارش #9 ثبت شد");
 });

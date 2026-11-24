@@ -80,12 +80,28 @@ def test_recent_cards_used_only_when_attached_and_sidebar_missing():
     assert resolved.product["product_id"] == 101
 
 
-def test_multiple_products_clarify_for_this_blue_or_missing_hint():
-    for hint in ("this", "blue", None):
+def test_multiple_products_clarify_for_this_or_missing_hint():
+    for hint in ("this", None):
         resolved = resolve_product_for_cart([], None, [MUG, CUP], {"hint": hint, "product_id": None})
         assert resolved.status == "clarify"
         assert resolved.product is None
         assert [c["product_id"] for c in resolved.candidates] == [101, 303]
+
+
+def test_name_hint_resolves_unique_product_by_name():
+    """A hint naming one shown product resolves it instead of clarifying."""
+    resolved = resolve_product_for_cart([], None, [MUG, CUP], {"hint": "blue", "product_id": None})
+    assert resolved.status == "selected"
+    assert resolved.product["product_id"] == 101
+    assert resolved.product["variant_label"] == ""
+    # Ambiguous names still clarify.
+    cups = [
+        {**CUP, "subject": "Blue Cup", "product_id": 304},
+        {**CUP, "subject": "Red Cup", "product_id": 305},
+    ]
+    ambiguous = resolve_product_for_cart([], None, cups, {"hint": "cup", "product_id": None})
+    assert ambiguous.status == "clarify"
+    assert [c["product_id"] for c in ambiguous.candidates] == [304, 305]
 
 
 def test_ordinal_hint_selects_shown_card():

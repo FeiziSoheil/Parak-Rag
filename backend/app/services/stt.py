@@ -16,6 +16,54 @@ logger = logging.getLogger(__name__)
 # Sample rate Whisper expects; conversion uses this.
 WHISPER_SAMPLE_RATE = 16000
 
+
+def _preload_cuda12_libs() -> list[str]:
+    """Preload CUDA 12 user-space libs (libcublas.so.12) shipped in pip nvidia-* wheels.
+
+    ctranslate2 4.x links against libcublas.so.12 (CUDA 12). If torch is a cu13x
+    build, only CUDA 13 libs (libcublas.so.13) exist on the loader path and
+    ctranslate2 fails at first inference with
+    'RuntimeError: Library libcublas.so.12 is not found or cannot be loaded'.
+    Loading the cu12 wheels explicitly via ctypes fixes resolution without
+    touching system CUDA. Must run before the first CUDA inference.
+    """
+    import ctypes
+    import site
+
+    loaded: list[str] = []
+    wanted = ("libcublasLt.so.12", "libcublas.so.12")  # Lt first: cublas depends on it
+
+    bases: list[Path] = []
+    try:
+        bases.extend(Path(sp) / "nvidia" for sp in site.getsitepackages())
+    except Exception:
+        pass
+    venv_sp = Path(__file__).resolve().parents[2] / "venv" / "lib"
+    if venv_sp.is_dir():
+        for sp in venv_sp.glob("python3*/site-packages"):
+            bases.append(sp / "nvidia")
+
+    seen: set[str] = set()
+    for base in bases:
+        if not base.is_dir():
+            continue
+        for lib_dir in sorted(base.glob("*/lib")):
+            for name in wanted:
+                if name in seen:
+                    continue
+                so = lib_dir / name
+                if so.exists():
+                    try:
+                        ctypes.CDLL(str(so), mode=ctypes.RTLD_GLOBAL)
+                        loaded.append(name)
+                        seen.add(name)
+                        logger.info("Preloaded %s from %s", name, lib_dir)
+                    except OSError as e:
+                        logger.warning("Could not preload %s: %s", so, e)
+        if len(seen) == len(wanted):
+            break
+    return loaded
+
 # Lock for thread-safe model loading
 _model_lock = threading.Lock()
 
@@ -77,6 +125,7 @@ _model: Any = None
 _device: str = "cpu"
 _compute_type: str = "int8"
 _model_loading: bool = False
+_force_cpu: bool = False
 
 
 def get_whisper_model() -> tuple[Any, str, str]:
@@ -117,10 +166,13 @@ def get_whisper_model() -> tuple[Any, str, str]:
             size = "small"
         compute = "int8"
 
-        # Try CUDA first
+        # Try CUDA first (skipped when a previous CUDA inference failed and forced CPU)
         try:
             import torch
-            if torch.cuda.is_available():
+            if not _force_cpu and torch.cuda.is_available():
+                # ctranslate2 needs CUDA 12 libs (libcublas.so.12); torch cu13x
+                # builds only expose .so.13, so preload cu12 wheels explicitly.
+                _preload_cuda12_libs()
                 logger.info("Loading Whisper model (%s) on CUDA with compute_type=%s...", size, compute)
                 _model = WhisperModel(size, device="cuda", compute_type=compute)
                 _device = "cuda"
@@ -147,16 +199,41 @@ def transcribe_audio(audio_path: str) -> str:
     Call from async code via run_in_executor.
     Prefer converting WebM/Opus to WAV before calling to avoid "Error parsing Opus packet header".
     """
-    model, _, _ = get_whisper_model()
     wav_path = convert_to_wav_16k(audio_path)
     path_to_use = wav_path if wav_path else audio_path
     try:
-        segments, _ = model.transcribe(path_to_use, language=None, vad_filter=True)
-        parts = [s.text.strip() for s in segments if s.text and s.text.strip()]
-        return " ".join(parts).strip() if parts else ""
+        return _transcribe_with_fallback(path_to_use)
     finally:
         if wav_path and Path(wav_path).exists():
             try:
                 Path(wav_path).unlink()
             except OSError:
                 pass
+
+
+def _transcribe_with_fallback(path_to_use: str) -> str:
+    """Transcribe; on CUDA runtime failure reload the singleton on CPU and retry once.
+
+    Keeps /api/voice-chat from 500-ing when GPU libs are broken (e.g. missing
+    libcublas.so.12): first failure flips _force_cpu so every later call uses CPU.
+    """
+    global _model, _force_cpu
+
+    def _run(model: Any) -> str:
+        segments, _ = model.transcribe(path_to_use, language=None, vad_filter=True)
+        parts = [s.text.strip() for s in segments if s.text and s.text.strip()]
+        return " ".join(parts).strip() if parts else ""
+
+    model, device, _ = get_whisper_model()
+    try:
+        return _run(model)
+    except Exception as e:
+        if device != "cuda":
+            raise
+        logger.error("CUDA transcription failed (%s: %s); falling back to CPU", type(e).__name__, e)
+        with _model_lock:
+            _model = None
+            _force_cpu = True
+        model, device, _ = get_whisper_model()
+        logger.info("Whisper reloaded on %s after CUDA failure", device)
+        return _run(model)

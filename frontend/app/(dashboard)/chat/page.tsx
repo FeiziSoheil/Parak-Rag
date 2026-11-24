@@ -12,6 +12,9 @@ import {
 } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { CartHeaderButton } from "@/components/cart/CartHeaderButton";
+import { CartSheet } from "@/components/cart/CartSheet";
+import { OrdersHeaderButton } from "@/components/orders/OrdersHeaderButton";
+import { OrdersSheet } from "@/components/orders/OrdersSheet";
 
 export default function ChatPage() {
   const router = useRouter();
@@ -84,11 +87,26 @@ export default function ChatPage() {
                   {currentSession?.title || "New Chat"}
                 </span>
               </div>
-              <CartHeaderButton />
+              <div className="flex items-center gap-1">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <OrdersHeaderButton />
+                  </TooltipTrigger>
+                  <TooltipContent side="left" sideOffset={8}>
+                    <p>Your orders</p>
+                  </TooltipContent>
+                </Tooltip>
+                <CartHeaderButton />
+              </div>
             </header>
 
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/60 bg-card shadow-modern">
-              <ChatPanel sessionId={currentSession?.id ?? null} />
+            {/* Floating cards: chat (+ product); cart slides width like session sidebar */}
+            <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+              <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+                <ChatPanel sessionId={currentSession?.id ?? null} />
+              </div>
+              <OrdersSheet />
+              <CartSheet />
             </div>
           </div>
         </SidebarInset>

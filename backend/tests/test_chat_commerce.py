@@ -375,7 +375,8 @@ def test_chat_screenshot_phrase_adds_first_purple_size(chat_client, db_session, 
     assert body["order"] is None
     assert body["checkout_phase"] == "idle"
     assert "ثبت شد" not in body["message"]
-    assert "Added 1 × Mens Supportive Running Shoes (Color: PURPLE · Size: 40)" in body["message"]
+    assert "1 عدد Mens Supportive Running Shoes (Color: PURPLE · Size: 40)" in body["message"]
+    assert "به سبد خرید اضافه شد" in body["message"]
     item = db_session.query(CartItem).filter(CartItem.user_id == user_a.id).one()
     assert item.product_id == 501
     assert item.variant_label == "Color: PURPLE · Size: 40"
@@ -411,6 +412,49 @@ def test_chat_selected_products_order_checks_out_without_placing(chat_client, db
     assert db_session.query(Order).count() == 0
 
 
+def test_chat_variant_ordinal_reply_adds_nth_listed_option(chat_client, db_session, user_a, auth_header_a, monkeypatch):
+    """Screenshot regression: variant list «1. Color: WHITE / 2. Color: black» + bare «دومی»
+    must add the pending product's second listed variant — no RAG, no hallucinated add."""
+    session = _session(db_session, user_a)
+    db_session.add(
+        Message(session_id=session.id, role="assistant", content="mouse", products=json.dumps(_shoe_cards()))
+    )
+    db_session.commit()
+    _patch_quiet(monkeypatch)
+    _block_rag(monkeypatch)
+
+    def post(text):
+        return chat_client.post(
+            "/api/chat",
+            data={"session_id": str(session.id), "message": text},
+            headers=auth_header_a,
+        )
+
+    asked = post("همین اولی باشه")
+    assert asked.status_code == 200
+    assert asked.json()["cart_updated"] is False
+    assert "کدام مدل از" in asked.json()["message"]
+    db_session.refresh(session)
+    pending = load_checkout_state(session.checkout_state)["pending_add"]
+    assert pending["product_id"] == 501
+    assert pending["variant_options"], "variant options must be stored for the pending product"
+
+    added = post("دومی")
+    assert added.status_code == 200
+    body = added.json()
+    assert body["cart_updated"] is True
+    assert body["order"] is None
+    assert "ثبت شد" not in body["message"]
+    item = db_session.query(CartItem).filter(CartItem.user_id == user_a.id).one()
+    assert item.product_id == 501
+    # Second listed option of product 501: PURPLE 40 (PURPLE39, PURPLE40, ...)
+    assert item.variant_label == "Color: PURPLE · Size: 40"
+    assert item.quantity == 1
+    assert db_session.query(Order).count() == 0
+    db_session.refresh(session)
+    assert load_checkout_state(session.checkout_state).get("pending_add") is None
+
+
 def test_chat_variant_clarify_followup_adds_named_color(chat_client, db_session, user_a, auth_header_a, monkeypatch):
     session = _session(db_session, user_a)
     db_session.add(
@@ -431,7 +475,7 @@ def test_chat_variant_clarify_followup_adds_named_color(chat_client, db_session,
     assert asked.status_code == 200
     assert asked.json()["cart_updated"] is False
     assert asked.json()["products"] == []
-    assert "Which variant" in asked.json()["message"]
+    assert "کدام مدل از" in asked.json()["message"]
     assert db_session.query(CartItem).count() == 0
     db_session.refresh(session)
     pending = load_checkout_state(session.checkout_state)["pending_add"]

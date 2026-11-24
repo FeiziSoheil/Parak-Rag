@@ -1,4 +1,4 @@
-"""RAG: Qdrant search (with score threshold) + LangChain OpenRouter stream."""
+"""RAG: Qdrant search (with score threshold) + LangChain AvalAI stream."""
 import asyncio
 import json
 import queue
@@ -6,26 +6,25 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import AsyncGenerator
 
-from qdrant_client import QdrantClient
+import httpx
 from qdrant_client.models import Filter, FieldCondition, Range, MatchValue
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage
 
 from app.config import (
-    QDRANT_URL,
     QDRANT_COLLECTION,
     QDRANT_COLLECTION_STORE,
     QDRANT_COLLECTION_FAQ,
     RAG_TOP_K,
     RAG_SCORE_THRESHOLD,
     MIN_SCORE_TO_DISPLAY,
-    OPENROUTER_API_KEY,
-    OPENROUTER_BASE_URL,
-    OPENROUTER_MODEL,
+    AVALAI_API_KEY,
+    AVALAI_BASE_URL,
+    AVALAI_MODEL,
     BASE_URL,
 )
-from app.ingestion.qdrant_store import ensure_collection
+from app.ingestion.qdrant_store import ensure_collection, make_qdrant_client
 
 
 def _extract_first_json_object(text: str) -> str | None:
@@ -175,7 +174,7 @@ def _apply_exclude_terms_filter(
 
 def analyze_collection_data() -> dict:
     """Scroll Qdrant collection and return categories list and price stats (min/max/avg/count)."""
-    client = QdrantClient(url=QDRANT_URL)
+    client = make_qdrant_client()
     ensure_collection(client, QDRANT_COLLECTION)
     categories: set[str] = set()
     prices: list[float] = []
@@ -268,7 +267,7 @@ def detect_intent_with_llm(message: str | None) -> dict:
     if not message or not message.strip():
         return {"needs_qdrant_search": False, "intent_type": "unknown", "confidence": 1.0}
     
-    if not OPENROUTER_API_KEY:
+    if not AVALAI_API_KEY:
         # Fallback: if no API key, assume product search for non-trivial messages
         return {"needs_qdrant_search": len(message.strip()) > 10, "intent_type": "unknown", "confidence": 0.5}
     
@@ -296,7 +295,7 @@ Rules:
 - Works for ANY language (English, Persian, French, Chinese, etc.)"""
 
     try:
-        llm = ChatOpenAI(**_openrouter_chat_kwargs(temperature=0, max_tokens=150))
+        llm = ChatOpenAI(**_avalai_chat_kwargs(temperature=0, max_tokens=150))
         response = llm.invoke([HumanMessage(content=prompt)])
         content = response.content if hasattr(response, "content") else str(response)
         
@@ -329,7 +328,7 @@ def detect_emotion_with_llm(user_message: str | None, assistant_reply: str | Non
     """
     if not user_message or not user_message.strip():
         return "neutral"
-    if not OPENROUTER_API_KEY:
+    if not AVALAI_API_KEY:
         return None
     prompt = f"""Based on this conversation, choose the assistant avatar's emotion.
 
@@ -351,7 +350,7 @@ Respond with ONLY a JSON object: {{ "emotion": "one_word_from_above" }}
 Use lowercase. No other text."""
 
     try:
-        llm = ChatOpenAI(**_openrouter_chat_kwargs(temperature=0, max_tokens=80))
+        llm = ChatOpenAI(**_avalai_chat_kwargs(temperature=0, max_tokens=80))
         response = llm.invoke([HumanMessage(content=prompt)])
         content = response.content if hasattr(response, "content") else str(response)
         json_str = _extract_first_json_object(content)
@@ -375,7 +374,7 @@ def detect_language_with_llm(text: str | None) -> str:
         return "en"
     if len(text.strip()) < 3:
         return "en"
-    if not OPENROUTER_API_KEY:
+    if not AVALAI_API_KEY:
         return "en"
     prompt = f"""Determine the language of the following text. Reply with ONLY a single language code (ISO 639-1), e.g. en, fa, ar, fr, de, zh-cn, zh-tw, tr, es, ru.
 Use lowercase. For Chinese use zh-cn or zh-tw. No explanation, no quotes, no punctuation.
@@ -385,7 +384,7 @@ Text:
 
 Language code:"""
     try:
-        llm = ChatOpenAI(**_openrouter_chat_kwargs(temperature=0, max_tokens=10))
+        llm = ChatOpenAI(**_avalai_chat_kwargs(temperature=0, max_tokens=10))
         response = llm.invoke([HumanMessage(content=prompt)])
         content = (response.content if hasattr(response, "content") else str(response)).strip().lower()
         # Extract first word/token (in case LLM added something)
@@ -410,7 +409,7 @@ def detect_emotion_with_llm(user_message: str, assistant_message: str) -> str:
     Returns one of: neutral, happy, excited, sad, confused, surprised, love, annoyed, angry.
     Used so the avatar reacts intelligently (e.g. thankful user -> happy, frustrated -> sad/annoyed).
     """
-    if not OPENROUTER_API_KEY:
+    if not AVALAI_API_KEY:
         return "neutral"
     user = (user_message or "").strip()[:2000]
     assistant = (assistant_message or "").strip()[:1500]
@@ -455,7 +454,7 @@ Respond with ONLY one word from this exact list: neutral, happy, excited, sad, c
 No explanation, no quotes, no other text."""
 
     try:
-        llm = ChatOpenAI(**_openrouter_chat_kwargs(temperature=0, max_tokens=20))
+        llm = ChatOpenAI(**_avalai_chat_kwargs(temperature=0, max_tokens=20))
         response = llm.invoke([HumanMessage(content=prompt)])
         content = (response.content if hasattr(response, "content") else str(response)).strip().lower()
         # Take first token that is a valid emotion
@@ -485,7 +484,7 @@ def search_qdrant(
 ) -> list[dict]:
     """Search Qdrant; return points with score >= score_threshold. Optional filters: price_max (lte), category (exact match on category_name).
     If none, retry with 0.25 then 0 so we always return something when collection has points."""
-    client = QdrantClient(url=QDRANT_URL)
+    client = make_qdrant_client()
     ensure_collection(client, QDRANT_COLLECTION)
     conditions = []
     if price_max is not None:
@@ -520,7 +519,7 @@ def search_store(
     score_threshold: float = RAG_SCORE_THRESHOLD,
 ) -> list[dict]:
     """Search store collection; return points with score >= score_threshold. Fallback to lower threshold if no results (so any-language queries still match)."""
-    client = QdrantClient(url=QDRANT_URL)
+    client = make_qdrant_client()
     ensure_collection(client, QDRANT_COLLECTION_STORE)
     for thr in (score_threshold, 0.25, 0.0):
         try:
@@ -544,7 +543,7 @@ def search_faq(
     score_threshold: float = RAG_SCORE_THRESHOLD,
 ) -> list[dict]:
     """Search FAQ collection; return points with score >= score_threshold. Fallback to lower threshold if no results (so any-language queries still match)."""
-    client = QdrantClient(url=QDRANT_URL)
+    client = make_qdrant_client()
     ensure_collection(client, QDRANT_COLLECTION_FAQ)
     for thr in (score_threshold, 0.25, 0.0):
         try:
@@ -731,14 +730,32 @@ def build_context(search_results: list[dict]) -> str:
     return "\n\n".join(parts) if parts else "No relevant products found."
 
 
-def _openrouter_chat_kwargs(**extra) -> dict:
-    """Shared ChatOpenAI kwargs for OpenRouter (incl. recommended headers)."""
-    if not OPENROUTER_API_KEY:
-        raise ValueError("OPENROUTER_API_KEY is not set in backend/.env")
+# AvalAI is reachable without VPN. Ignore env HTTP(S)_PROXY / ALL_PROXY
+# (e.g. socks://127.0.0.1:10808 from Psiphon) which httpx/ChatOpenAI reject.
+_avalai_http_client: httpx.Client | None = None
+_avalai_http_async_client: httpx.AsyncClient | None = None
+
+
+def _get_avalai_http_clients() -> tuple[httpx.Client, httpx.AsyncClient]:
+    global _avalai_http_client, _avalai_http_async_client
+    if _avalai_http_client is None:
+        _avalai_http_client = httpx.Client(trust_env=False, timeout=60.0)
+    if _avalai_http_async_client is None:
+        _avalai_http_async_client = httpx.AsyncClient(trust_env=False, timeout=60.0)
+    return _avalai_http_client, _avalai_http_async_client
+
+
+def _avalai_chat_kwargs(**extra) -> dict:
+    """Shared ChatOpenAI kwargs for AvalAI (OpenAI-compatible API)."""
+    if not AVALAI_API_KEY:
+        raise ValueError("AVALAI_API_KEY is not set in backend/.env")
+    http_client, http_async_client = _get_avalai_http_clients()
     kwargs: dict = {
-        "model": OPENROUTER_MODEL,
-        "api_key": OPENROUTER_API_KEY,
-        "base_url": OPENROUTER_BASE_URL,
+        "model": AVALAI_MODEL,
+        "api_key": AVALAI_API_KEY,
+        "base_url": AVALAI_BASE_URL.rstrip("/"),
+        "http_client": http_client,
+        "http_async_client": http_async_client,
         **extra,
     }
     if BASE_URL:
@@ -750,8 +767,8 @@ def _openrouter_chat_kwargs(**extra) -> dict:
 
 
 def get_llm():
-    """ChatOpenAI configured for OpenRouter."""
-    return ChatOpenAI(**_openrouter_chat_kwargs(temperature=0.3, streaming=True))
+    """ChatOpenAI configured for AvalAI (ignores system SOCKS/HTTP proxy env)."""
+    return ChatOpenAI(**_avalai_chat_kwargs(temperature=0.3, streaming=True))
 
 
 def _invoke_chain_sync(
@@ -1168,7 +1185,7 @@ def enhanced_search_with_llm(
     
     Returns: { query, results, summary, filters_applied }
     """
-    if not OPENROUTER_API_KEY:
+    if not AVALAI_API_KEY:
         results = run_embed_and_search(user_query, None, top_k=limit, price_max=price_max, category=category)
         return {
             "query": user_query,
@@ -1409,7 +1426,7 @@ Respond with JSON only, no other text."""
 
     # Generate summary (optional)
     summary = None
-    if results and OPENROUTER_API_KEY:
+    if results and AVALAI_API_KEY:
         try:
             llm = get_llm()
             lines = "\n".join(

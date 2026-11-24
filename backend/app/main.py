@@ -1,6 +1,11 @@
 from contextlib import asynccontextmanager
 import os
 
+# Must run before HuggingFace / Qdrant / OpenAI httpx clients are created.
+from app.proxy_env import sanitize_proxy_env
+
+sanitize_proxy_env()
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text

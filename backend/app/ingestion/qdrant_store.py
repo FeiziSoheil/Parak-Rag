@@ -15,6 +15,11 @@ _POINT_NAMESPACE_STORE = uuid.uuid5(uuid.NAMESPACE_DNS, "qdrant.store.local")
 _POINT_NAMESPACE_FAQ = uuid.uuid5(uuid.NAMESPACE_DNS, "qdrant.faq.local")
 
 
+def make_qdrant_client(url: str | None = None) -> QdrantClient:
+    """Qdrant on localhost must ignore system SOCKS/HTTP proxy env."""
+    return QdrantClient(url=url or QDRANT_URL, trust_env=False)
+
+
 def _collection_vector_size(client: QdrantClient, collection: str) -> int | None:
     """Return the vector size of the collection's default vector, or None if not found."""
     try:
@@ -36,7 +41,7 @@ def _collection_vector_size(client: QdrantClient, collection: str) -> int | None
 def get_collection_points_count(collection: str = QDRANT_COLLECTION) -> int | None:
     """Return the number of points in the collection, or None on error."""
     try:
-        client = QdrantClient(url=QDRANT_URL)
+        client = make_qdrant_client()
         result = client.count(collection_name=collection, exact=False)
         return result.count
     except Exception:
@@ -85,7 +90,7 @@ def _point_id_image(product_id, img_idx: int) -> uuid.UUID:
 
 def store_products(embedder, products: list[dict], collection: str = QDRANT_COLLECTION):
     """Embed and upsert products. Point id = UUID from product_id (and img idx) for Qdrant compatibility (idempotent overwrite)."""
-    client = QdrantClient(url=QDRANT_URL)
+    client = make_qdrant_client()
     ensure_collection(client, collection)
     texts = [p["context_text"] for p in products]
     text_vectors = embed_texts(texts)
@@ -154,7 +159,7 @@ def store_store_records(
         return
     texts = [r["context_text"] for r in records]
     text_vectors = embed_texts(texts)
-    client = QdrantClient(url=QDRANT_URL)
+    client = make_qdrant_client()
     ensure_collection(client, collection_name)
     points = []
     for r, vec in zip(records, text_vectors):
@@ -184,7 +189,7 @@ def store_faq_records(
         return
     texts = [r["context_text"] for r in records]
     text_vectors = embed_texts(texts)
-    client = QdrantClient(url=QDRANT_URL)
+    client = make_qdrant_client()
     ensure_collection(client, collection_name)
     points = []
     for r, vec in zip(records, text_vectors):
